@@ -8,6 +8,8 @@ correct even when the page is behind a login).
 
 from __future__ import annotations
 
+import base64
+
 import trafilatura
 from playwright.async_api import Page, async_playwright
 
@@ -68,6 +70,26 @@ async def _pick_active_page(pages: list[Page]) -> Page | None:
     return fallback
 
 
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+async def _fetch_png(page: Page, src: str) -> bytes | None:
+    """Download the real PNG bytes (through the authenticated session). None if
+    it isn't a fetchable PNG — caller then falls back to a screenshot."""
+    try:
+        if src.startswith("data:image/png"):
+            return base64.b64decode(src.split(",", 1)[1])
+        if src.startswith("http"):
+            resp = await page.context.request.get(src)
+            if resp.ok:
+                body = await resp.body()
+                if body[:8] == _PNG_MAGIC:
+                    return body
+    except Exception:
+        return None
+    return None
+
+
 async def _extract_diagrams(page: Page) -> list[Diagram]:
     diagrams: list[Diagram] = []
     handles = await page.query_selector_all("img")
@@ -78,10 +100,20 @@ async def _extract_diagrams(page: Page) -> list[Diagram]:
             box = await handle.bounding_box()
             if not box or box["width"] < MIN_W or box["height"] < MIN_H:
                 continue
-            await handle.scroll_into_view_if_needed(timeout=2000)
             idx = len(diagrams)
             png_name = f"diagram-{idx}.png"
-            await handle.screenshot(path=str(DIAGRAMS_DIR / png_name))
+            dest = DIAGRAMS_DIR / png_name
+
+            # Prefer the real PNG file — element screenshots of transparent PNGs
+            # bleed the page content behind them into the image.
+            src = await handle.evaluate("el => el.currentSrc || el.src || ''")
+            data = await _fetch_png(page, src) if src else None
+            if data:
+                dest.write_bytes(data)
+            else:
+                await handle.scroll_into_view_if_needed(timeout=2000)
+                await handle.screenshot(path=str(dest))
+
             meta = await handle.evaluate(_CONTEXT_JS)
             diagrams.append(
                 Diagram(
@@ -92,7 +124,7 @@ async def _extract_diagrams(page: Page) -> list[Diagram]:
                 )
             )
         except Exception:
-            continue  # skip images that won't screenshot (lazy/offscreen/etc.)
+            continue  # skip images that won't load/screenshot (lazy/offscreen/etc.)
     return diagrams
 
 
