@@ -1,0 +1,27 @@
+[project]
+name = "text-to-instructor"
+version = "0.1.0"
+description = "Local learning companion: reads the Cisco U page open in your Chrome and narrates it like an instructor, in sync with its diagrams."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "playwright>=1.44",
+    "trafilatura>=1.9",
+    "anthropic>=0.39",
+    "ollama>=0.3",
+    "kokoro-onnx>=0.4",
+    "soundfile>=0.12",
+    "python-dotenv>=1.0",
+    "pydantic>=2.7",
+]
+
+[project.scripts]
+t2i = "app.main:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

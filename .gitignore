@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Secrets / local config
+.env
+
+# Runtime artifacts (captured diagrams, generated audio, models)
+data/
+models/
+*.wav
+*.png
+
+# Chrome debugging profile created by launch-chrome.sh
+.chrome-profile/
+
+# OS
+.DS_Store

@@ -1,0 +1,67 @@
+"""Runtime configuration, loaded from environment / .env with sensible defaults."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Project-root-relative working dirs for captured diagrams and generated audio.
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data"
+DIAGRAMS_DIR = DATA_DIR / "diagrams"
+AUDIO_DIR = DATA_DIR / "audio"
+
+
+@dataclass
+class Settings:
+    llm_provider: str = os.getenv("LLM_PROVIDER", "claude")
+    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    claude_model: str = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2-vision")
+    # Ollama can run on another box on the LAN; point this at its host:port.
+    ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    # Seconds to wait on the Ollama server (it can be slow to warm up a model).
+    ollama_timeout: float = float(os.getenv("OLLAMA_TIMEOUT", "600"))
+    # Send diagram images to the model? "auto" detects vision support; a text-only
+    # model (e.g. qwen3) then narrates from the page text + diagram captions.
+    ollama_vision: str = os.getenv("OLLAMA_VISION", "auto")
+
+    # Claude Code as the brain: uses your logged-in Claude subscription (no API key).
+    claude_bin: str = os.getenv("CLAUDE_BIN", "claude")
+    claude_code_model: str = os.getenv("CLAUDE_CODE_MODEL", "")  # "" = CLI default
+    claude_code_timeout: float = float(os.getenv("CLAUDE_CODE_TIMEOUT", "600"))
+
+    # Codex as the brain: uses your logged-in OpenAI/ChatGPT subscription (no API key).
+    codex_bin: str = os.getenv("CODEX_BIN", "codex")
+    codex_model: str = os.getenv("CODEX_MODEL", "")  # "" = CLI default
+    codex_timeout: float = float(os.getenv("CODEX_TIMEOUT", "600"))
+
+    tts_voice: str = os.getenv("TTS_VOICE", "af_heart")
+    tts_speed: float = float(os.getenv("TTS_SPEED", "1.0"))
+
+    cdp_url: str = os.getenv("CDP_URL", "http://localhost:9222")
+
+    # The debugging Chrome (must match scripts/launch-chrome.sh) — the player
+    # opens in this profile, not your personal Chrome.
+    chrome_app: str = os.getenv(
+        "CHROME_APP", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    )
+    chrome_profile_dir: str = os.getenv(
+        "CHROME_PROFILE_DIR", str(ROOT / ".chrome-profile")
+    )
+
+    host: str = os.getenv("HOST", "127.0.0.1")
+    port: int = int(os.getenv("PORT", "8765"))
+
+    def ensure_dirs(self) -> None:
+        DIAGRAMS_DIR.mkdir(parents=True, exist_ok=True)
+        AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+
+
+settings = Settings()
+settings.ensure_dirs()

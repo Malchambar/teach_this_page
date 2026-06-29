@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Text-to-Instructor</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Text-to-Instructor</h1>
+    <div class="controls-row">
+      <button id="narrate" class="primary">▶ Narrate this page</button>
+      <label>Voice
+        <select id="voice">
+          <option value="af_heart">af_heart</option>
+          <option value="af_bella">af_bella</option>
+          <option value="am_michael">am_michael</option>
+          <option value="bf_emma">bf_emma</option>
+          <option value="am_adam">am_adam</option>
+        </select>
+      </label>
+      <label>Speed
+        <select id="speed">
+          <option value="0.9">0.9×</option>
+          <option value="1.0" selected>1.0×</option>
+          <option value="1.15">1.15×</option>
+          <option value="1.3">1.3×</option>
+          <option value="1.5">1.5×</option>
+        </select>
+      </label>
+      <label>Brain
+        <select id="provider">
+          <option value="">(default)</option>
+          <option value="claude_code">Claude (subscription)</option>
+          <option value="codex">OpenAI / Codex (subscription)</option>
+          <option value="claude">Claude (API key)</option>
+          <option value="ollama">Ollama (local)</option>
+        </select>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="autoadvance" checked /> Auto-advance
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <div id="status" class="status"></div>
+
+    <section id="stage" class="stage hidden">
+      <figure id="diagram-wrap">
+        <img id="diagram" alt="" />
+        <figcaption id="caption"></figcaption>
+      </figure>
+      <p id="transcript" class="transcript"></p>
+    </section>
+
+    <div id="player" class="player hidden">
+      <button id="prev" title="Previous">⏮</button>
+      <button id="playpause" class="primary" title="Play/Pause">⏸</button>
+      <button id="next" title="Next">⏭</button>
+      <span id="seg-counter" class="seg-counter">0 / 0</span>
+    </div>
+  </main>
+
+  <audio id="audio" preload="auto"></audio>
+  <script src="/static/player.js"></script>
+</body>
+</html>
