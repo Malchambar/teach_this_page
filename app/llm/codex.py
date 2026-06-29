@@ -35,8 +35,9 @@ _SCHEMA = {
                 "properties": {
                     "speak": {"type": "string"},
                     "image_idx": {"type": ["integer", "null"]},
+                    "pause": {"type": "boolean"},
                 },
-                "required": ["speak", "image_idx"],
+                "required": ["speak", "image_idx", "pause"],
             },
         }
     },
@@ -49,21 +50,17 @@ class CodexProvider:
         self.bin = settings.codex_bin
         self.model = settings.codex_model
 
-    async def generate_segments(self, capture: PageCapture) -> list[Segment]:
-        diagrams = capture.diagrams[:MAX_VISION_IMAGES]
-        manifest = "\n".join(f"  [{d.idx}] (attached image {i + 1})" for i, d in enumerate(diagrams))
-        prompt = "\n".join(
-            [
-                SYSTEM_PROMPT,
-                "",
-                "The diagrams are attached as images, in this order:",
-                manifest,
-                "",
-                build_user_text(capture),
-                "",
-                "Output ONLY the JSON object.",
-            ]
-        )
+    async def generate_segments(
+        self, capture: PageCapture, use_images: bool = True
+    ) -> list[Segment]:
+        diagrams = capture.diagrams[:MAX_VISION_IMAGES] if use_images else []
+        head = [SYSTEM_PROMPT, ""]
+        if use_images:
+            manifest = "\n".join(
+                f"  [{d.idx}] (attached image {i + 1})" for i, d in enumerate(diagrams)
+            )
+            head += ["The diagrams are attached as images, in this order:", manifest, ""]
+        prompt = "\n".join([*head, build_user_text(capture), "", "Output ONLY the JSON object."])
 
         with tempfile.TemporaryDirectory() as td:
             out_file = f"{td}/out.txt"

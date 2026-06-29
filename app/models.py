@@ -12,6 +12,7 @@ class Diagram(BaseModel):
     png_path: str  # local PNG (element screenshot)
     alt: str = ""
     context: str = ""  # nearby caption/heading text, for the LLM
+    description: str = ""  # richer description from the vision engine (split mode)
 
 
 class PageCapture(BaseModel):
@@ -29,6 +30,7 @@ class Segment(BaseModel):
     idx: int
     speak: str
     image_idx: int | None = None  # index into PageCapture.diagrams
+    pause: bool = False  # stop here (e.g. a content review question) — don't auto-advance
     audio_path: str | None = None  # filled in by TTS
 
 

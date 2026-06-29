@@ -26,9 +26,11 @@ class ClaudeProvider:
         self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
         self.model = settings.claude_model
 
-    async def generate_segments(self, capture: PageCapture) -> list[Segment]:
+    async def generate_segments(
+        self, capture: PageCapture, use_images: bool = True
+    ) -> list[Segment]:
         content: list[dict] = [{"type": "text", "text": build_user_text(capture)}]
-        for d in capture.diagrams[:MAX_VISION_IMAGES]:
+        for d in capture.diagrams[:MAX_VISION_IMAGES] if use_images else []:
             data = (DIAGRAMS_DIR / d.png_path).read_bytes()
             content.append({"type": "text", "text": f"Diagram [{d.idx}]:"})
             content.append(

@@ -39,9 +39,11 @@ class OllamaProvider:
         except Exception:
             return False  # unknown -> safest is captions-only (won't error a text model)
 
-    async def generate_segments(self, capture: PageCapture) -> list[Segment]:
+    async def generate_segments(
+        self, capture: PageCapture, use_images: bool = True
+    ) -> list[Segment]:
         user_msg: dict = {"role": "user", "content": build_user_text(capture)}
-        if await self._supports_vision():
+        if use_images and await self._supports_vision():
             user_msg["images"] = [
                 str(DIAGRAMS_DIR / d.png_path)
                 for d in capture.diagrams[:MAX_VISION_IMAGES]

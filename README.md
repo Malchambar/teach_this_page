@@ -2,7 +2,7 @@
 
 > Turn the training page open in your browser into an engaging, spoken mini-lecture — with the diagrams shown in sync.
 
-**Status:** `v0.1.0` · **Alpha** (first working release) · macOS · Apple Silicon
+**Status:** `v0.2.0` · **Alpha** · macOS · Apple Silicon
 
 Text-to-Instructor is a local, privacy-friendly learning companion for people who
 retain more by **listening and looking** than by silently reading. It reads the
@@ -17,18 +17,28 @@ text-to-speech too monotonous to focus on.
 
 ### Features
 - 📖 Reads the **live page in your Chrome** (keeps your login) — no copy/paste
-- 🗣️ **Natural local voice** (Kokoro neural TTS) — not robotic system TTS
+- 🗣️ **Natural local voice** (Kokoro neural TTS) — not robotic system TTS — switchable mid-lesson
 - 🖼️ **Diagrams auto-advance in sync** with the narration
-- 🧠 **Swappable brain:** your Claude subscription, your OpenAI subscription, the Claude API, or fully-local Ollama
+- 🧠 **Split engines:** mix a **vision** engine (reads diagrams) and a **writer** engine (narrates) — e.g. Claude for diagrams + Codex for text — using your Claude/OpenAI subscriptions, the Claude API, or fully-local Ollama
+- ⏸️ **Knows when to stop:** detects Cisco "Content Review Question" sections and pauses so you can answer
+- ⚡ **Lazy audio:** playback starts as soon as the first segment is ready; the rest render in the background
 - 🔒 **Local-first:** captured content stays on your machine (fully offline with Ollama)
-- ⏯️ Player controls: play/pause (spacebar), prev/next, speed, auto-advance toggle
+- ⏯️ Player controls: play/pause (spacebar), prev/next, speed (live), auto-advance toggle
 
 ## How it works
 
-`Narrate this page` → capture the active Chrome tab (text + diagrams via the
-DevTools Protocol) → a vision LLM writes an ordered narration tagged to each
-diagram → Kokoro renders natural speech locally → the player plays the audio and
-auto-advances the diagrams.
+`Narrate this page` →
+1. **Capture** the active Chrome tab over the DevTools Protocol — the readable text
+   plus each diagram as an element screenshot (works behind your login).
+2. **Vision** engine describes each diagram (cached by image, so re-runs are fast).
+3. **Writer** engine turns the page text + diagram descriptions into an ordered
+   narration, tagging which diagram to show with each part.
+4. **Kokoro** renders natural speech locally, **lazily** — segment 1 plays within a
+   second while the rest render in the background.
+5. The **player** plays the audio and auto-advances the matching diagram, stopping
+   at content-review questions.
+
+(If the vision and writer engines are the same, steps 2–3 collapse into one pass.)
 
 ## Prerequisites
 
@@ -38,16 +48,28 @@ auto-advances the diagrams.
   `voices-v1.0.bin` from
   [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases)
   and drop both into `models/`.
-- One brain (the thing that writes the narration). Pick any:
-  - **Claude subscription** (`LLM_PROVIDER=claude_code`, recommended): the
-    [Claude Code](https://claude.com/claude-code) CLI, logged into your plan.
-    No API key, strong diagram vision.
-  - **OpenAI subscription** (`LLM_PROVIDER=codex`): the Codex CLI logged into
-    your OpenAI/ChatGPT plan. No API key, attaches diagrams directly (fast).
-  - **Claude API** (`LLM_PROVIDER=claude`): set `ANTHROPIC_API_KEY` in `.env`.
-  - **Ollama** (`LLM_PROVIDER=ollama`, fully local): install
-    [Ollama](https://ollama.com); a vision model (`llama3.2-vision`) reads the
-    diagrams, or a text model (e.g. `qwen3`) narrates from the diagram captions.
+- **At least one engine** (see the table below).
+
+## Engines & account requirements
+
+The narration is produced by two roles — a **vision** engine (reads diagrams) and
+a **writer** engine (writes the narration). You can use the same engine for both,
+or mix them. Each role can be any of:
+
+| Engine | What it needs | Free account? | Setup |
+|---|---|---|---|
+| **`claude_code`** | **Claude Pro or Max** (or an Anthropic API key with credit) | ❌ No | Install [Claude Code](https://claude.com/claude-code), run `claude` once and log in |
+| **`codex`** | **ChatGPT Plus or higher** (or an OpenAI API key with credit) | ❌ No | `brew install codex`, then `codex login` |
+| **`claude`** (API) | An **Anthropic API key** with credit (pay per use) | n/a | Put `ANTHROPIC_API_KEY` in `.env` |
+| **`ollama`** | A capable local machine (a vision model is ~5–8 GB) | ✅ **Yes — free & local** | Install [Ollama](https://ollama.com); `ollama pull llama3.2-vision` |
+| **`off`** (vision only) | — | ✅ Yes | No vision engine; narrates from Cisco's built-in alt-text |
+
+> **Free vs. paid, in short:** the `claude_code` and `codex` engines require a
+> *paid* Claude/ChatGPT subscription — a free account on either will not work. If
+> you have neither, use **Ollama** (fully free and local) or **API keys**
+> (pay-as-you-go, no subscription). The default config uses `claude_code` for
+> vision and `codex` for writing; change `VISION_PROVIDER` / `WRITER_PROVIDER` in
+> `.env` (or the dropdowns in the player) to match what you have.
 
 ## Setup
 
@@ -56,7 +78,7 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-cp .env.example .env   # then fill in ANTHROPIC_API_KEY (or set LLM_PROVIDER=ollama)
+cp .env.example .env   # then set VISION_PROVIDER / WRITER_PROVIDER to engines you have
 # put kokoro-v1.0.onnx and voices-v1.0.bin into models/
 ```
 
@@ -77,13 +99,26 @@ cp .env.example .env   # then fill in ANTHROPIC_API_KEY (or set LLM_PROVIDER=oll
    ```
    The player opens at http://127.0.0.1:8765.
 3. Click **▶ Narrate this page**. The first run loads the voice model (a few
-   seconds); after that it's quick. Spacebar = play/pause.
+   seconds); after that it's quick.
+
+### In the player
+- **Vision** / **Writer** dropdowns — pick the engine for each role (or leave at the
+  `.env` defaults).
+- **Voice** — switch any time, even mid-lesson; it re-records from where you are.
+- **Speed** — live; changes playback instantly.
+- **Auto-advance** — on, it rolls into the next segment automatically; off, it stops
+  after each so you advance with ⏭.
+- **Spacebar** — play/pause. **⏮ / ⏭** — previous / next segment.
+- **Content review questions** — playback stops and shows a banner; answer it in
+  Cisco, then press ⏭ to continue.
 
 ## Configuration (`.env`)
 
 | Variable | Meaning |
 |---|---|
-| `LLM_PROVIDER` | `claude_code`, `codex`, `claude`, or `ollama` |
+| `VISION_PROVIDER` | engine that reads diagrams: `claude_code`, `codex`, `claude`, `ollama`, or `off` |
+| `WRITER_PROVIDER` | engine that writes narration (same options) |
+| `LLM_PROVIDER` | fallback writer if `WRITER_PROVIDER` is unset |
 | `CLAUDE_BIN` / `CLAUDE_CODE_MODEL` | claude CLI path / model (subscription brain) |
 | `CODEX_BIN` / `CODEX_MODEL` | codex CLI path / model (subscription brain) |
 | `ANTHROPIC_API_KEY` | required only for `LLM_PROVIDER=claude` (API) |
@@ -124,6 +159,31 @@ networking · Cisco · CCNA · CCNP · security · study aid · accessibility ·
 text-to-speech · TTS · Kokoro · narration · e-learning · audio learning ·
 local-first · FastAPI · Playwright · Chrome DevTools Protocol · Claude · OpenAI ·
 Ollama
+
+## Changelog
+
+### v0.2.0
+- **Split engines** — independent **Vision** (reads diagrams) and **Writer**
+  (narrates) engines, selectable per run. Same engine for both = one combined pass;
+  `VISION_PROVIDER=off` = narrate from Cisco alt-text only.
+- **Cached diagram descriptions** — the vision pass is cached by image content and
+  runs concurrently, so re-narrating/re-voicing a page is much faster.
+- **Lazy audio** — playback starts as soon as the first segment is voiced; the rest
+  render in the background (with prefetch), instead of waiting for the whole page.
+- **Live voice switching** — change the voice mid-lesson and it re-records from the
+  current segment and resumes.
+- **Content Review Question handling** — detected, announced, and the player pauses
+  instead of auto-advancing past it.
+- **Full-page narration** — raised the page text limit (16k → 120k chars) so long
+  lessons are narrated end to end.
+- **Speed fixes** — playback speed is now live and applied once (was doubled), and
+  the Speed control no longer throws on a blank value.
+- **Player opens in the debugging Chrome profile** (not Safari or your personal
+  Chrome), and capture ignores the player's own tab.
+
+### v0.1.0
+- First working release: capture the page in Chrome, narrate it with diagrams in
+  sync, local Kokoro voice, swappable brain (Claude / Codex / Claude API / Ollama).
 
 ## License
 

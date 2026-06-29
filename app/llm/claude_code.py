@@ -26,26 +26,32 @@ class ClaudeCodeProvider:
         self.bin = settings.claude_bin
         self.model = settings.claude_code_model
 
-    def _build_prompt(self, capture: PageCapture) -> str:
-        diagrams = capture.diagrams[:MAX_VISION_IMAGES]
-        img_lines = [f"  [{d.idx}] data/diagrams/{d.png_path}" for d in diagrams]
-        parts = [
-            SYSTEM_PROMPT,
-            "",
-            "Use the Read tool to open each diagram image file below so you can "
-            "describe it accurately, then write the narration.",
-            "DIAGRAM IMAGE FILES (number -> path, relative to the working directory):",
-            *img_lines,
-            "",
+    def _build_prompt(self, capture: PageCapture, use_images: bool) -> str:
+        parts = [SYSTEM_PROMPT, ""]
+        if use_images:
+            diagrams = capture.diagrams[:MAX_VISION_IMAGES]
+            parts += [
+                "Use the Read tool to open each diagram image file below so you can "
+                "describe it accurately, then write the narration.",
+                "DIAGRAM IMAGE FILES (number -> path, relative to the working directory):",
+                *[f"  [{d.idx}] data/diagrams/{d.png_path}" for d in diagrams],
+                "",
+            ]
+        parts += [
             build_user_text(capture),
             "",
             "Output ONLY the JSON object — no prose, no code fences.",
         ]
         return "\n".join(parts)
 
-    async def generate_segments(self, capture: PageCapture) -> list[Segment]:
-        prompt = self._build_prompt(capture)
-        args = [self.bin, "-p", "--output-format", "json", "--allowedTools", "Read"]
+    async def generate_segments(
+        self, capture: PageCapture, use_images: bool = True
+    ) -> list[Segment]:
+        prompt = self._build_prompt(capture, use_images)
+        tools = "Read" if use_images else ""
+        args = [self.bin, "-p", "--output-format", "json"]
+        if tools:
+            args += ["--allowedTools", tools]
         if self.model:
             args += ["--model", self.model]
 

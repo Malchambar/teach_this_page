@@ -1,5 +1,6 @@
-// Player: requests a narrated lesson, then plays each segment's audio while
-// showing its diagram, auto-advancing to the next.
+// Player: gets the narration script up front, then renders each segment's audio
+// lazily (with a little prefetch ahead) so playback starts fast. Shows each
+// segment's diagram, stops at content-review questions, and can switch voice live.
 
 const $ = (id) => document.getElementById(id);
 
@@ -7,12 +8,14 @@ const els = {
   narrate: $("narrate"),
   voice: $("voice"),
   speed: $("speed"),
-  provider: $("provider"),
+  vision: $("vision"),
+  writer: $("writer"),
   status: $("status"),
   stage: $("stage"),
   diagram: $("diagram"),
   caption: $("caption"),
   transcript: $("transcript"),
+  pausenote: $("pausenote"),
   player: $("player"),
   prev: $("prev"),
   next: $("next"),
@@ -24,6 +27,7 @@ const els = {
 
 let lesson = null;
 let cur = 0;
+let audioUrls = []; // per-segment audio URL cache (cleared on new lesson / voice change)
 
 // Always return a finite, positive playback rate (the dropdown can be blank).
 function currentSpeed() {
@@ -42,11 +46,27 @@ function setStatus(msg, isError = false) {
   els.status.classList.toggle("error", isError);
 }
 
+// Render (server-side, cached) and cache the URL for one segment's audio.
+async function ensureAudio(i) {
+  if (i < 0 || !lesson || i >= lesson.segments.length) return null;
+  if (audioUrls[i]) return audioUrls[i];
+  const res = await fetch(`/api/segment_audio/${i}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || `Audio failed (${res.status})`);
+  audioUrls[i] = `/audio/${data.audio_path}`;
+  return audioUrls[i];
+}
+
+// Warm upcoming segments in the background so they're ready when we get there.
+function prefetch(i) {
+  ensureAudio(i).catch(() => {});
+}
+
 async function narrate() {
   els.narrate.disabled = true;
   els.stage.classList.add("hidden");
   els.player.classList.add("hidden");
-  setStatus("Reading the page in Chrome, writing the lecture, and generating audio… this can take a moment.");
+  setStatus("Reading the page in Chrome and writing the lecture… this can take a moment.");
 
   try {
     const res = await fetch("/api/narrate", {
@@ -54,14 +74,15 @@ async function narrate() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         voice: els.voice.value,
-        speed: parseFloat(els.speed.value),
-        provider: els.provider.value || null,
+        vision: els.vision.value || null,
+        writer: els.writer.value || null,
       }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
 
     lesson = data;
+    audioUrls = [];
     if (!lesson.segments || lesson.segments.length === 0) {
       throw new Error("No narration was produced for this page.");
     }
@@ -82,7 +103,7 @@ function diagramFor(seg) {
   return (lesson.diagrams || []).find((d) => d.idx === seg.image_idx) || null;
 }
 
-function loadSegment(i, autoplay) {
+async function loadSegment(i, autoplay) {
   if (!lesson || i < 0 || i >= lesson.segments.length) return;
   cur = i;
   const seg = lesson.segments[i];
@@ -98,11 +119,23 @@ function loadSegment(i, autoplay) {
   }
 
   els.transcript.textContent = seg.speak;
+  els.pausenote.classList.toggle("hidden", !seg.pause);
   els.segCounter.textContent = `${i + 1} / ${lesson.segments.length}`;
-
-  els.audio.src = `/audio/${seg.audio_path}`;
   els.audio.playbackRate = currentSpeed();
-  if (autoplay) els.audio.play().catch(() => {});
+
+  try {
+    const url = await ensureAudio(i);
+    if (cur !== i) return; // user moved on while audio was loading
+    els.audio.src = url;
+    els.audio.playbackRate = currentSpeed();
+    if (autoplay) els.audio.play().catch(() => {});
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+
+  // Warm the next couple of segments.
+  prefetch(i + 1);
+  prefetch(i + 2);
 }
 
 function togglePlay() {
@@ -110,9 +143,31 @@ function togglePlay() {
   else els.audio.pause();
 }
 
+async function changeVoice() {
+  if (!lesson) return; // nothing loaded yet; dropdown applies at next Narrate
+  const wasPlaying = !els.audio.paused;
+  els.audio.pause();
+  setStatus("Switching voice…");
+  try {
+    const res = await fetch("/api/revoice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voice: els.voice.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `Re-voice failed (${res.status})`);
+    audioUrls = []; // force re-fetch in the new voice
+    setStatus(`${lesson.title || lesson.url} — ${lesson.segments.length} segments`);
+    loadSegment(cur, wasPlaying);
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+}
+
 els.audio.addEventListener("ended", () => {
-  // Only roll into the next segment when auto-advance is on.
-  if (els.autoadvance.checked && cur < lesson.segments.length - 1) {
+  // Roll into the next segment only when auto-advance is on and this isn't a stop.
+  const seg = lesson && lesson.segments[cur];
+  if (els.autoadvance.checked && seg && !seg.pause && cur < lesson.segments.length - 1) {
     loadSegment(cur + 1, true);
   }
 });
@@ -123,6 +178,7 @@ els.narrate.addEventListener("click", narrate);
 els.playpause.addEventListener("click", togglePlay);
 els.prev.addEventListener("click", () => loadSegment(cur - 1, true));
 els.next.addEventListener("click", () => loadSegment(cur + 1, true));
+els.voice.addEventListener("change", changeVoice);
 els.speed.addEventListener("change", () => {
   els.audio.playbackRate = currentSpeed();
 });
@@ -141,5 +197,7 @@ fetch("/api/settings")
   .then((s) => {
     if (s.tts_voice) els.voice.value = s.tts_voice;
     if (s.tts_speed) applySpeedDefault(s.tts_speed);
+    if (s.vision_provider) els.vision.value = s.vision_provider;
+    if (s.writer_provider) els.writer.value = s.writer_provider;
   })
   .catch(() => {});

@@ -34,8 +34,8 @@ def health() -> dict:
 def get_settings() -> dict:
     """Non-secret settings the UI shows (never returns the API key)."""
     return {
-        "llm_provider": settings.llm_provider,
-        "claude_model": settings.claude_model,
+        "vision_provider": settings.vision_provider,
+        "writer_provider": settings.writer_provider,
         "ollama_model": settings.ollama_model,
         "ollama_host": settings.ollama_host,
         "tts_voice": settings.tts_voice,
@@ -46,26 +46,59 @@ def get_settings() -> dict:
 
 class NarrateRequest(BaseModel):
     voice: str | None = None
-    speed: float | None = None
-    provider: str | None = None
+    vision: str | None = None
+    writer: str | None = None
+
+
+class RevoiceRequest(BaseModel):
+    voice: str
+
+
+# The current lesson + voice, so audio can be rendered lazily per segment and the
+# voice can change without re-capturing or re-running the brain.
+_last_lesson = None
+_current_voice = settings.tts_voice
 
 
 @app.post("/api/narrate")
 async def narrate(req: NarrateRequest) -> dict:
-    """Capture the active Chrome tab, build the lecture, return it for playback."""
+    """Capture the active Chrome tab and return the narration script (no audio yet)."""
     from app.pipeline import build_lesson  # lazy import keeps server boot cheap
 
+    global _last_lesson, _current_voice
     try:
-        lesson = await build_lesson(
-            voice=req.voice,
-            speed=req.speed,
-            provider=req.provider,
-        )
+        lesson = await build_lesson(vision=req.vision, writer=req.writer)
     except ConnectionError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     except Exception as e:  # surface a readable message to the UI
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+    _last_lesson = lesson
+    _current_voice = req.voice or settings.tts_voice
     return lesson.model_dump()
+
+
+@app.get("/api/segment_audio/{idx}")
+async def segment_audio(idx: int) -> dict:
+    """Render (and cache) one segment's audio in the current voice; return its path."""
+    from app.pipeline import synth_segment
+
+    if _last_lesson is None or not (0 <= idx < len(_last_lesson.segments)):
+        raise HTTPException(status_code=404, detail="No such segment in the current lesson.")
+    try:
+        name = await synth_segment(_last_lesson, idx, _current_voice)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+    return {"idx": idx, "audio_path": name}
+
+
+@app.post("/api/revoice")
+async def revoice(req: RevoiceRequest) -> dict:
+    """Switch the current lesson's voice; segments re-render on demand as you play."""
+    global _current_voice
+    if _last_lesson is None:
+        raise HTTPException(status_code=400, detail="No lesson to re-voice yet. Narrate a page first.")
+    _current_voice = req.voice
+    return {"ok": True, "voice": _current_voice}
 
 
 @app.get("/")

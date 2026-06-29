@@ -29,13 +29,22 @@
           <option value="1.5">1.5×</option>
         </select>
       </label>
-      <label>Brain
-        <select id="provider">
+      <label>Vision
+        <select id="vision" title="Engine that reads the diagrams">
           <option value="">(default)</option>
-          <option value="claude_code">Claude (subscription)</option>
-          <option value="codex">OpenAI / Codex (subscription)</option>
-          <option value="claude">Claude (API key)</option>
-          <option value="ollama">Ollama (local)</option>
+          <option value="claude_code">Claude</option>
+          <option value="codex">Codex</option>
+          <option value="ollama">Ollama</option>
+          <option value="off">Off (captions)</option>
+        </select>
+      </label>
+      <label>Writer
+        <select id="writer" title="Engine that writes the narration">
+          <option value="">(default)</option>
+          <option value="codex">Codex</option>
+          <option value="claude_code">Claude</option>
+          <option value="claude">Claude API</option>
+          <option value="ollama">Ollama</option>
         </select>
       </label>
       <label class="toggle">
@@ -53,6 +62,7 @@
         <figcaption id="caption"></figcaption>
       </figure>
       <p id="transcript" class="transcript"></p>
+      <p id="pausenote" class="pausenote hidden">⏸ Content review question — answer it in Cisco, then press ⏭ to continue.</p>
     </section>
 
     <div id="player" class="player hidden">

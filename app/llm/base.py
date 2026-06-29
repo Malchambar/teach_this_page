@@ -9,12 +9,18 @@ from app.models import PageCapture, Segment
 
 # Cap how many diagrams we send as vision input, to keep payloads sane.
 MAX_VISION_IMAGES = 12
-# Cap page text so we don't blow the context window on huge pages.
-MAX_TEXT_CHARS = 16000
+# Cap page text so we don't blow the context window on huge pages. Generous so a
+# whole lesson is narrated; very long pages on small local models may still clip.
+MAX_TEXT_CHARS = 120000
 
 
 class LLMProvider(Protocol):
-    async def generate_segments(self, capture: PageCapture) -> list[Segment]: ...
+    async def generate_segments(
+        self, capture: PageCapture, use_images: bool = True
+    ) -> list[Segment]:
+        """Write narration. When use_images is False, rely on diagram text
+        (vision descriptions or alt-text) instead of attaching the images."""
+        ...
 
 
 SYSTEM_PROMPT = """You are an engaging, plain-spoken instructor helping a network \
@@ -29,9 +35,15 @@ listener through it: name what to look at, trace the flow, point out the key par
 - This text is READ ALOUD. No markdown, no code fences, no URLs, no bullet symbols, \
 no citations. Spell out acronyms the first time if useful.
 - Be accurate to the page. Don't invent facts or specs.
+- If the page has a knowledge check or a section titled "Content Review Question" \
+(or any quiz/question prompt), do NOT read the question text and do NOT give the \
+answer. Instead emit one short segment telling the learner to pause and answer the \
+content review question before continuing, and set "pause": true on that segment. \
+Use "pause": false on every other segment.
 
 Return ONLY JSON of this exact shape:
-{"segments": [{"speak": "<spoken text>", "image_idx": <diagram number or null>}]}"""
+{"segments": [{"speak": "<spoken text>", "image_idx": <diagram number or null>, \
+"pause": <true to stop for a question, otherwise false>}]}"""
 
 
 def build_user_text(capture: PageCapture) -> str:
@@ -41,7 +53,7 @@ def build_user_text(capture: PageCapture) -> str:
     if capture.diagrams:
         lines += ["", "DIAGRAMS (refer to these by number in image_idx):"]
         for d in capture.diagrams[:MAX_VISION_IMAGES]:
-            desc = d.alt or d.context or "(no caption)"
+            desc = d.description or d.alt or d.context or "(no caption)"
             lines.append(f"  [{d.idx}] {desc}")
     return "\n".join(lines)
 
@@ -68,6 +80,7 @@ def parse_segments(raw: str) -> list[Segment]:
 
     segments: list[Segment] = []
     for item in items:
+        pause = False
         if isinstance(item, str):
             speak, image_idx = item.strip(), None
         elif isinstance(item, dict):
@@ -75,11 +88,14 @@ def parse_segments(raw: str) -> list[Segment]:
             image_idx = item.get("image_idx")
             if not isinstance(image_idx, int):
                 image_idx = None
+            pause = bool(item.get("pause"))
         else:
             continue
         if not speak:
             continue
-        segments.append(Segment(idx=len(segments), speak=speak, image_idx=image_idx))
+        segments.append(
+            Segment(idx=len(segments), speak=speak, image_idx=image_idx, pause=pause)
+        )
     if not segments:
         raise ValueError(f"Model returned no usable segments. Got: {raw[:200]}")
     return segments

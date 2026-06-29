@@ -15,11 +15,16 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 DIAGRAMS_DIR = DATA_DIR / "diagrams"
 AUDIO_DIR = DATA_DIR / "audio"
+DESCRIPTIONS_DIR = DATA_DIR / "descriptions"  # cached vision descriptions of diagrams
 
 
 @dataclass
 class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "claude")
+    # Split engines: a vision engine describes diagrams, a writer engine narrates.
+    # Same value for both = one combined pass. vision_provider "off" = captions only.
+    vision_provider: str = os.getenv("VISION_PROVIDER", "claude_code")
+    writer_provider: str = os.getenv("WRITER_PROVIDER", "codex")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2-vision")
@@ -61,6 +66,7 @@ class Settings:
     def ensure_dirs(self) -> None:
         DIAGRAMS_DIR.mkdir(parents=True, exist_ok=True)
         AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        DESCRIPTIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

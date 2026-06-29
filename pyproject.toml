@@ -1,6 +1,6 @@
 [project]
 name = "text-to-instructor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local learning companion: reads the Cisco U page open in your Chrome and narrates it like an instructor, in sync with its diagrams."
 requires-python = ">=3.12"
 dependencies = [
