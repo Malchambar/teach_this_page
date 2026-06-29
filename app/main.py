@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
+import re
 import subprocess
 import sys
 import webbrowser
+import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -58,6 +62,7 @@ class RevoiceRequest(BaseModel):
 # voice can change without re-capturing or re-running the brain.
 _last_lesson = None
 _current_voice = settings.tts_voice
+_narrate_task = None  # the in-flight narrate task, so Stop can cancel it
 
 
 @app.post("/api/narrate")
@@ -65,16 +70,58 @@ async def narrate(req: NarrateRequest) -> dict:
     """Capture the active Chrome tab and return the narration script (no audio yet)."""
     from app.pipeline import build_lesson  # lazy import keeps server boot cheap
 
-    global _last_lesson, _current_voice
+    global _last_lesson, _current_voice, _narrate_task
+    _narrate_task = asyncio.current_task()
     try:
         lesson = await build_lesson(vision=req.vision, writer=req.writer)
+    except asyncio.CancelledError:
+        from app.proc import kill_all
+
+        kill_all()  # kill any engine subprocess still running
+        raise
     except ConnectionError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     except Exception as e:  # surface a readable message to the UI
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+    finally:
+        _narrate_task = None
     _last_lesson = lesson
     _current_voice = req.voice or settings.tts_voice
     return lesson.model_dump()
+
+
+@app.post("/api/stop")
+async def stop() -> dict:
+    """Cancel an in-flight narrate and kill any running engine subprocesses."""
+    from app.proc import kill_all
+
+    killed = kill_all()
+    task = _narrate_task
+    if task is not None and not task.done():
+        task.cancel()
+    return {"stopped": True, "killed": killed}
+
+
+@app.get("/api/diagrams.zip")
+def diagrams_zip() -> Response:
+    """Download the current page's diagrams as a zip, named by their captions."""
+    if _last_lesson is None or not _last_lesson.diagrams:
+        raise HTTPException(status_code=404, detail="No diagrams to save yet. Narrate a page first.")
+
+    def clean(s: str, fallback: str) -> str:
+        s = re.sub(r"[^\w \-]", "", s or "").strip()[:60].strip()
+        return s or fallback
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for d in _last_lesson.diagrams:
+            path = DIAGRAMS_DIR / d.png_path
+            if path.exists():
+                name = f"{d.idx:02d} - {clean(d.alt or d.context, f'diagram-{d.idx}')}.png"
+                z.write(path, name)
+    title = clean(_last_lesson.title, "diagrams")
+    headers = {"Content-Disposition": f'attachment; filename="{title} - diagrams.zip"'}
+    return Response(buf.getvalue(), media_type="application/zip", headers=headers)
 
 
 @app.get("/api/segment_audio/{idx}")

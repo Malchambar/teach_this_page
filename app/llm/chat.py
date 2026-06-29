@@ -7,12 +7,11 @@ own knowledge. The current page (set by the last narrate) is provided as context
 
 from __future__ import annotations
 
-import asyncio
 import json
-import subprocess
 import tempfile
 
 from app.config import ROOT, settings
+from app.proc import run_capture
 
 CLI_ENGINES = {"claude_code", "codex"}
 
@@ -77,14 +76,10 @@ async def _chat_cli(engine: str, messages: list[dict], web: bool, preamble: str)
         if settings.claude_code_model:
             args += ["--model", settings.claude_code_model]
 
-        def run():
-            return subprocess.run(
-                args, input=prompt, capture_output=True, text=True,
-                cwd=str(ROOT), timeout=settings.claude_code_timeout,
-            )
-
-        proc = await asyncio.to_thread(run)
-        env = json.loads(proc.stdout)
+        _, out, _ = await run_capture(
+            args, input_text=prompt, cwd=str(ROOT), timeout=settings.claude_code_timeout
+        )
+        env = json.loads(out)
         if env.get("is_error"):
             raise RuntimeError(str(env.get("result"))[:400])
         return env.get("result", "")
@@ -98,18 +93,14 @@ async def _chat_cli(engine: str, messages: list[dict], web: bool, preamble: str)
         if settings.codex_model:
             args += ["-m", settings.codex_model]
 
-        def run():
-            return subprocess.run(
-                args, input=prompt, capture_output=True, text=True,
-                cwd=str(ROOT), timeout=settings.codex_timeout,
-            )
-
-        proc = await asyncio.to_thread(run)
+        _, _, err = await run_capture(
+            args, input_text=prompt, cwd=str(ROOT), timeout=settings.codex_timeout
+        )
         try:
             with open(out) as f:
                 return f.read()
         except FileNotFoundError:
-            raise RuntimeError((proc.stderr or "")[:400]) from None
+            raise RuntimeError((err or "")[:400]) from None
 
 
 # --- API engines (chat completions; no web) ---

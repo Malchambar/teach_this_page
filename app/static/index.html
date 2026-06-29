@@ -5,13 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Text-to-Instructor</title>
   <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;text y='.9em' font-size='90'&gt;🎧&lt;/text&gt;&lt;/svg&gt;" />
+  <script>try{var t=localStorage.getItem('t2i_theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header>
-    <h1>Text-to-Instructor</h1>
+    <div class="topbar">
+      <h1>Text-to-Instructor</h1>
+      <button id="theme" class="icon-btn" title="Toggle light / dark">🌓</button>
+    </div>
     <div class="controls-row">
-      <button id="narrate" class="primary">▶ Narrate this page</button>
+      <button id="narrate" class="primary">▶ Teach this page</button>
       <label>Voice
         <select id="voice">
           <option value="af_heart">af_heart</option>
@@ -57,6 +61,7 @@
       <label class="toggle">
         <input type="checkbox" id="autoadvance" checked /> Auto-advance
       </label>
+      <button id="savediagrams" class="hidden" title="Save this page's diagrams as a zip">💾 Save diagrams</button>
     </div>
   </header>
 
@@ -80,6 +85,7 @@
         <button id="next" title="Next">⏭</button>
         <span id="seg-counter" class="seg-counter">0 / 0</span>
       </div>
+      <p id="hint" class="hint hidden">Space = play / pause (when not typing)</p>
     </main>
 
     <aside id="chat" class="chat">

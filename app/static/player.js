@@ -24,12 +24,19 @@ const els = {
   segCounter: $("seg-counter"),
   audio: $("audio"),
   autoadvance: $("autoadvance"),
+  theme: $("theme"),
+  savediagrams: $("savediagrams"),
+  hint: $("hint"),
 };
 
 let lesson = null;
 let cur = 0;
 let audioUrls = []; // per-segment audio URL cache (cleared on new lesson / voice change)
 let advanceOnPlay = false; // after a paused (content-review) segment, Play goes to next
+let narrateController = null; // AbortController while a lesson is being prepared
+
+const isTyping = (t) =>
+  t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable);
 
 // Always return a finite, positive playback rate (the dropdown can be blank).
 function currentSpeed() {
@@ -65,10 +72,11 @@ function prefetch(i) {
 }
 
 async function narrate() {
-  els.narrate.disabled = true;
+  narrateController = new AbortController();
+  els.narrate.textContent = "■ Stop";
   els.stage.classList.add("hidden");
   els.player.classList.add("hidden");
-  setStatus("Reading the page in Chrome and writing the lecture… this can take a moment.");
+  setStatus("Preparing to teach this page — reading it in Chrome and writing the lesson… this can take a moment.");
 
   try {
     const res = await fetch("/api/narrate", {
@@ -79,6 +87,7 @@ async function narrate() {
         vision: els.vision.value || null,
         writer: els.writer.value || null,
       }),
+      signal: narrateController.signal,
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
@@ -92,12 +101,20 @@ async function narrate() {
     cur = 0;
     els.stage.classList.remove("hidden");
     els.player.classList.remove("hidden");
+    els.hint.classList.remove("hidden");
+    els.savediagrams.classList.toggle("hidden", !(lesson.diagrams && lesson.diagrams.length));
     loadSegment(0, true);
   } catch (e) {
-    setStatus(e.message, true);
+    setStatus(e.name === "AbortError" ? "Stopped." : e.message, e.name !== "AbortError");
   } finally {
-    els.narrate.disabled = false;
+    narrateController = null;
+    els.narrate.textContent = "▶ Teach this page";
   }
+}
+
+function stopNarrate() {
+  if (narrateController) narrateController.abort(); // ends the wait on our side
+  fetch("/api/stop", { method: "POST" }).catch(() => {}); // kills engine subprocesses
 }
 
 function diagramFor(seg) {
@@ -201,8 +218,22 @@ els.audio.addEventListener("ended", () => {
 els.audio.addEventListener("play", () => (els.playpause.textContent = "⏸"));
 els.audio.addEventListener("pause", () => (els.playpause.textContent = "▶"));
 
-els.narrate.addEventListener("click", narrate);
+els.narrate.addEventListener("click", () => (narrateController ? stopNarrate() : narrate()));
+els.savediagrams.addEventListener("click", () => (window.location.href = "/api/diagrams.zip"));
 els.playpause.addEventListener("click", togglePlay);
+
+// Light / dark theme toggle (persisted; applied early in <head> to avoid a flash).
+function applyThemeIcon() {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  els.theme.textContent = light ? "☀️" : "🌙";
+}
+els.theme.addEventListener("click", () => {
+  const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("t2i_theme", next); } catch (e) {}
+  applyThemeIcon();
+});
+applyThemeIcon();
 els.prev.addEventListener("click", () => loadSegment(cur - 1, true));
 els.next.addEventListener("click", () => loadSegment(cur + 1, true));
 els.voice.addEventListener("change", changeVoice);
@@ -231,9 +262,9 @@ els.vision.addEventListener("change", savePrefs);
 els.writer.addEventListener("change", savePrefs);
 els.autoadvance.addEventListener("change", savePrefs);
 
-// Spacebar = play/pause when a lesson is loaded.
+// Spacebar = play/pause when a lesson is loaded — but never while typing (e.g. chat).
 document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && lesson && e.target.tagName !== "SELECT") {
+  if (e.code === "Space" && lesson && !isTyping(e.target)) {
     e.preventDefault();
     togglePlay();
   }

@@ -7,11 +7,10 @@ sees the images (strong vision) before writing the narration.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import subprocess
 
 from app.config import ROOT, settings
+from app.proc import run_capture
 from app.llm.base import (
     MAX_VISION_IMAGES,
     SYSTEM_PROMPT,
@@ -55,31 +54,23 @@ class ClaudeCodeProvider:
         if self.model:
             args += ["--model", self.model]
 
-        def run() -> subprocess.CompletedProcess:
-            return subprocess.run(
-                args,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                cwd=str(ROOT),
-                timeout=settings.claude_code_timeout,
-            )
-
         try:
-            proc = await asyncio.to_thread(run)
+            rc, out, err = await run_capture(
+                args, input_text=prompt, cwd=str(ROOT), timeout=settings.claude_code_timeout
+            )
         except FileNotFoundError as e:
             raise RuntimeError(
                 f"Could not find the '{self.bin}' CLI. Install Claude Code or set "
                 "CLAUDE_BIN to its full path."
             ) from e
 
-        if proc.returncode != 0:
-            raise RuntimeError(f"claude CLI failed: {(proc.stderr or proc.stdout)[:400]}")
+        if rc != 0:
+            raise RuntimeError(f"claude CLI failed: {(err or out)[:400]}")
 
         try:
-            env = json.loads(proc.stdout)
+            env = json.loads(out)
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"Unexpected claude output: {proc.stdout[:400]}") from e
+            raise RuntimeError(f"Unexpected claude output: {out[:400]}") from e
 
         if env.get("is_error"):
             raise RuntimeError(f"claude returned an error: {str(env.get('result'))[:400]}")

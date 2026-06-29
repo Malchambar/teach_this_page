@@ -12,12 +12,12 @@ import asyncio
 import base64
 import hashlib
 import json
-import subprocess
 import sys
 import tempfile
 
 from app.config import DESCRIPTIONS_DIR, DIAGRAMS_DIR, ROOT, settings
 from app.models import Diagram
+from app.proc import run_capture
 
 DESCRIBE_PROMPT = (
     "Describe this diagram for a narrator who will explain it aloud to a student. "
@@ -97,14 +97,10 @@ async def _describe_claude_code(path) -> str:
     if settings.claude_code_model:
         args += ["--model", settings.claude_code_model]
 
-    def run():
-        return subprocess.run(
-            args, input=prompt, capture_output=True, text=True,
-            cwd=str(ROOT), timeout=settings.claude_code_timeout,
-        )
-
-    proc = await asyncio.to_thread(run)
-    env = json.loads(proc.stdout)
+    _, out, _ = await run_capture(
+        args, input_text=prompt, cwd=str(ROOT), timeout=settings.claude_code_timeout
+    )
+    env = json.loads(out)
     if env.get("is_error"):
         raise RuntimeError(str(env.get("result"))[:200])
     return env.get("result", "")
@@ -120,18 +116,14 @@ async def _describe_codex(path) -> str:
         if settings.codex_model:
             args += ["-m", settings.codex_model]
 
-        def run():
-            return subprocess.run(
-                args, input=DESCRIBE_PROMPT, capture_output=True, text=True,
-                cwd=str(ROOT), timeout=settings.codex_timeout,
-            )
-
-        proc = await asyncio.to_thread(run)
+        _, _, err = await run_capture(
+            args, input_text=DESCRIBE_PROMPT, cwd=str(ROOT), timeout=settings.codex_timeout
+        )
         try:
             with open(out) as f:
                 return f.read()
         except FileNotFoundError:
-            raise RuntimeError((proc.stderr or "")[:200]) from None
+            raise RuntimeError((err or "")[:200]) from None
 
 
 async def _describe_ollama(path) -> str:

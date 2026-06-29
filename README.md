@@ -175,6 +175,14 @@ Ollama
 ## Changelog
 
 ### Unreleased
+- **Stop button** — "Teach this page" turns into **Stop** while preparing; it
+  cancels the request and kills the running engine subprocess (no more wasted
+  subscription usage).
+- **Save diagrams** — a button downloads the current page's diagrams as a zip,
+  named by their captions (kept for your own study notes).
+- **Light / dark theme** — toggle in the header, remembered across sessions.
+- **Renamed** "Narrate this page" → **"Teach this page"** (it does more than narrate now).
+- **Spacebar fix** — Space no longer triggers play/pause while you're typing in chat.
 - **Fixed garbled/repeating speech on long segments** — Kokoro could babble or
   hallucinate words on long passages; audio is now synthesized sentence by sentence
   and stitched together. (Cached audio is regenerated.)

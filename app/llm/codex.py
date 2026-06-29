@@ -8,12 +8,11 @@ final message is captured via `-o/--output-last-message`.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import subprocess
 import tempfile
 
 from app.config import DIAGRAMS_DIR, ROOT, settings
+from app.proc import run_capture
 from app.llm.base import (
     MAX_VISION_IMAGES,
     SYSTEM_PROMPT,
@@ -81,18 +80,10 @@ class CodexProvider:
             for d in diagrams:
                 args += ["-i", str(DIAGRAMS_DIR / d.png_path)]
 
-            def run() -> subprocess.CompletedProcess:
-                return subprocess.run(
-                    args,
-                    input=prompt,
-                    capture_output=True,
-                    text=True,
-                    cwd=str(ROOT),
-                    timeout=settings.codex_timeout,
-                )
-
             try:
-                proc = await asyncio.to_thread(run)
+                _, _, err = await run_capture(
+                    args, input_text=prompt, cwd=str(ROOT), timeout=settings.codex_timeout
+                )
             except FileNotFoundError as e:
                 raise RuntimeError(
                     f"Could not find the '{self.bin}' CLI. Install Codex or set CODEX_BIN."
@@ -102,10 +93,8 @@ class CodexProvider:
                 with open(out_file) as f:
                     result = f.read()
             except FileNotFoundError:
-                raise RuntimeError(
-                    f"codex produced no output. stderr: {(proc.stderr or '')[:400]}"
-                ) from None
+                raise RuntimeError(f"codex produced no output. stderr: {(err or '')[:400]}") from None
 
         if not result.strip():
-            raise RuntimeError(f"codex returned empty output. stderr: {(proc.stderr or '')[:400]}")
+            raise RuntimeError(f"codex returned empty output. stderr: {(err or '')[:400]}")
         return parse_segments(result)
