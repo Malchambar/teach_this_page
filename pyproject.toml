@@ -9,6 +9,7 @@ dependencies = [
     "playwright>=1.44",
     "trafilatura>=1.9",
     "anthropic>=0.39",
+    "openai>=1.40",
     "ollama>=0.3",
     "kokoro-onnx>=0.4",
     "soundfile>=0.12",

@@ -25,7 +25,11 @@ def get_provider(name: str | None = None) -> LLMProvider:
         from app.llm.ollama import OllamaProvider
 
         return OllamaProvider()
+    if provider in ("gemini", "grok", "openrouter"):
+        from app.llm.openai_compat import OpenAICompatProvider
+
+        return OpenAICompatProvider(provider)
     raise ValueError(
-        f"Unknown LLM provider: {provider!r} "
-        "(use 'claude_code', 'codex', 'claude', or 'ollama')"
+        f"Unknown LLM provider: {provider!r} (use 'claude_code', 'codex', 'claude', "
+        "'ollama', 'gemini', 'grok', or 'openrouter')"
     )

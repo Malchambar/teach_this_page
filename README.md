@@ -61,6 +61,9 @@ or mix them. Each role can be any of:
 | **`claude_code`** | **Claude Pro or Max** (or an Anthropic API key with credit) | ❌ No | Install [Claude Code](https://claude.com/claude-code), run `claude` once and log in |
 | **`codex`** | **ChatGPT Plus or higher** (or an OpenAI API key with credit) | ❌ No | `brew install codex`, then `codex login` |
 | **`claude`** (API) | An **Anthropic API key** with credit (pay per use) | n/a | Put `ANTHROPIC_API_KEY` in `.env` |
+| **`gemini`** | A **Google Gemini API key** | n/a | `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`) in `.env` |
+| **`grok`** | An **xAI API key** | n/a | `XAI_API_KEY` (+ optional `GROK_MODEL`) in `.env` |
+| **`openrouter`** | An **OpenRouter API key** (fronts many models) | n/a | `OPENROUTER_API_KEY` + `OPENROUTER_MODEL` (e.g. `anthropic/claude-sonnet-4`) in `.env` |
 | **`ollama`** | A capable local machine (a vision model is ~5–8 GB) | ✅ **Yes — free & local** | Install [Ollama](https://ollama.com); `ollama pull llama3.2-vision` |
 | **`off`** (vision only) | — | ✅ Yes | No vision engine; narrates from Cisco's built-in alt-text |
 
@@ -161,6 +164,11 @@ local-first · FastAPI · Playwright · Chrome DevTools Protocol · Claude · Op
 Ollama
 
 ## Changelog
+
+### Unreleased
+- **More engines** — added **Gemini**, **Grok (xAI)**, and **OpenRouter** as Vision
+  and/or Writer options (all OpenAI-compatible). Add the relevant API key to `.env`
+  and pick them in the player dropdowns.
 
 ### v0.2.0
 - **Split engines** — independent **Vision** (reads diagrams) and **Writer**

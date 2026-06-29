@@ -71,7 +71,24 @@ async def _describe(provider: str, path) -> str:
         return await _describe_ollama(path)
     if p == "claude":
         return await _describe_claude_api(path)
+    if p in ("gemini", "grok", "openrouter"):
+        return await _describe_openai_compat(p, path)
     raise ValueError(f"Unknown vision provider: {provider!r}")
+
+
+async def _describe_openai_compat(name: str, path) -> str:
+    from app.llm.openai_compat import OpenAICompatProvider, image_part
+
+    prov = OpenAICompatProvider(name)
+    resp = await prov.client.chat.completions.create(
+        model=prov.model,
+        max_tokens=512,
+        messages=[{
+            "role": "user",
+            "content": [{"type": "text", "text": DESCRIBE_PROMPT}, image_part(path)],
+        }],
+    )
+    return resp.choices[0].message.content or ""
 
 
 async def _describe_claude_code(path) -> str:

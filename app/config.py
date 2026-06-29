@@ -46,6 +46,14 @@ class Settings:
     codex_model: str = os.getenv("CODEX_MODEL", "")  # "" = CLI default
     codex_timeout: float = float(os.getenv("CODEX_TIMEOUT", "600"))
 
+    # OpenAI-compatible API engines (Gemini, Grok/xAI, OpenRouter). Each needs a key.
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    xai_api_key: str = os.getenv("XAI_API_KEY", "")
+    grok_model: str = os.getenv("GROK_MODEL", "grok-2-vision-1212")
+    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+    openrouter_model: str = os.getenv("OPENROUTER_MODEL", "")  # e.g. google/gemini-2.5-flash
+
     tts_voice: str = os.getenv("TTS_VOICE", "af_heart")
     tts_speed: float = float(os.getenv("TTS_SPEED", "1.0"))
 
