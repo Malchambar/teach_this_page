@@ -132,6 +132,11 @@ async function loadSegment(i, autoplay) {
 
   els.transcript.textContent = seg.speak;
   els.pausenote.classList.toggle("hidden", !seg.pause);
+
+  // Subtle fade as each segment comes up.
+  els.stage.classList.remove("fade");
+  void els.stage.offsetWidth;
+  els.stage.classList.add("fade");
   els.segCounter.textContent = `${i + 1} / ${lesson.segments.length}`;
   els.audio.playbackRate = currentSpeed();
 
