@@ -87,9 +87,13 @@ async def _chat_cli(engine: str, messages: list[dict], web: bool, preamble: str)
     # codex
     with tempfile.TemporaryDirectory() as td:
         out = f"{td}/out.txt"
-        args = [settings.codex_bin, "exec", "-s", "read-only", "--skip-git-repo-check", "-o", out]
+        # `--search` (live web search) is a TOP-LEVEL codex flag, so it must come
+        # before the `exec` subcommand — `codex exec --search` is rejected with
+        # "unexpected argument '--search'".
+        args = [settings.codex_bin]
         if web:
             args += ["--search"]
+        args += ["exec", "-s", "read-only", "--skip-git-repo-check", "-o", out]
         if settings.codex_model:
             args += ["-m", settings.codex_model]
 
