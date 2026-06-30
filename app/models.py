@@ -13,6 +13,8 @@ class Diagram(BaseModel):
     alt: str = ""
     context: str = ""  # nearby caption/heading text, for the LLM
     description: str = ""  # richer description from the vision engine (split mode)
+    is_video: bool = False  # this "image" is a video poster — offer "watch on the page"
+    anchor: str = ""  # same-page fragment to bring the source tab to (e.g. "#video1")
 
 
 class Step(BaseModel):

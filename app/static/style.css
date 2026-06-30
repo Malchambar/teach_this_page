@@ -172,12 +172,50 @@ main { flex: 1; min-width: 0; padding: 32px 28px; overflow-y: auto; }
 }
 .stage figure { margin: 0; text-align: center; position: relative; }
 #diagram {
-  max-width: 100%;
-  max-height: 72vh;
+  max-width: min(100%, 860px);
+  max-height: 64vh;
   border-radius: var(--radius);
   background: #fff;
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
+}
+/* Play arrow + label centered over a video poster — sends you to the source tab. */
+.video-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: #fff;
+  cursor: pointer;
+}
+.vo-arrow {
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  padding-left: 5px; /* optical-center the triangle */
+  box-shadow: var(--shadow);
+}
+.video-overlay:hover .vo-arrow { background: rgba(0, 0, 0, 0.82); }
+.vo-label {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 #caption { color: var(--muted); font-size: 13px; margin-top: 10px; }
 

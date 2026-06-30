@@ -36,6 +36,7 @@ const els = {
   slidePrev: $("slide-prev"),
   slideNext: $("slide-next"),
   slideDots: $("slide-dots"),
+  videoOverlay: $("video-overlay"),
 };
 
 // Show how much local disk this session's generated audio/diagrams occupy
@@ -248,6 +249,15 @@ function showSlide(k) {
   const label = stepLabel(seg) || d.alt || d.context || "";
   els.caption.textContent =
     slideDias.length > 1 ? `${label}  ·  ${slideIdx + 1}/${slideDias.length}` : label;
+  // Video posters get a "watch on the original page" overlay instead of a still.
+  if (els.videoOverlay) {
+    if (d.is_video) {
+      els.videoOverlay.dataset.anchor = d.anchor || "";
+      els.videoOverlay.classList.remove("hidden");
+    } else {
+      els.videoOverlay.classList.add("hidden");
+    }
+  }
   renderDots();
 }
 
@@ -513,6 +523,18 @@ if (els.jumpBtn)
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ anchor }),
+    }).catch(() => {});
+  });
+
+// "Watch this video on the original page" — bring the source tab to the front
+// (and scroll to the video if we captured an anchor). It plays in the source
+// page, never in this player.
+if (els.videoOverlay)
+  els.videoOverlay.addEventListener("click", () => {
+    fetch("/api/open_step", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ anchor: els.videoOverlay.dataset.anchor || "" }),
     }).catch(() => {});
   });
 

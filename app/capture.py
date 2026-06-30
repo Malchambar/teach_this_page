@@ -27,7 +27,7 @@ MIN_W, MIN_H = 240, 160
 MAX_DIAGRAMS = 25
 
 # Per-image, in the browser: pull alt text and nearby caption/heading for context.
-_CONTEXT_JS = """
+_CONTEXT_JS = r"""
 (img) => {
   const alt = img.getAttribute('alt') || '';
   let context = '';
@@ -43,7 +43,24 @@ _CONTEXT_JS = """
       if (el && /^H[1-6]$/.test(el.tagName)) { context = el.innerText.trim(); break; }
     }
   }
-  return { alt, context };
+  // Video detection: is this image a poster inside (or beside) a video player?
+  // If so, the lesson should send the learner to the source page to watch it.
+  let isVideo = false, anchor = '';
+  let p = img;
+  for (let i = 0; i < 4 && p && p.tagName !== 'BODY'; i++) {
+    const cls = (p.className && p.className.toString) ? p.className.toString() : '';
+    if (p.tagName === 'VIDEO') isVideo = true;
+    if (/\b(video|player|vjs|jw-?player|media-player|brightcove|kaltura)\b/i.test(cls)) isVideo = true;
+    // a sibling player directly inside this small container (not the whole page)
+    for (const c of p.children) {
+      if (c.tagName === 'VIDEO') isVideo = true;
+      if (c.tagName === 'IFRAME' && /player|video|youtube|vimeo/i.test(c.getAttribute('src') || '')) isVideo = true;
+    }
+    if (!anchor && p.id) anchor = '#' + p.id;
+    if (isVideo) break;
+    p = p.parentElement;
+  }
+  return { alt, context, isVideo, anchor };
 }
 """
 
@@ -261,6 +278,8 @@ async def _extract_diagrams(page: Page) -> list[Diagram]:
                     png_path=png_name,
                     alt=meta.get("alt", ""),
                     context=meta.get("context", ""),
+                    is_video=bool(meta.get("isVideo")),
+                    anchor=meta.get("anchor", "") or "",
                 )
             )
         except Exception:
@@ -703,11 +722,11 @@ async def capture_active_tab(on_stage=None, step_mode: str = "auto") -> PageCapt
 
 
 async def scroll_to_anchor(anchor: str) -> bool:
-    """Bring the lesson tab to the front and scroll it to a step anchor (Step
-    Mode "open this step on the page"). Reuses the same CDP tab pick/wake as
-    capture. Returns False if Chrome/tab can't be reached."""
-    if not anchor:
-        return False
+    """Bring the original source tab to the front and, if an anchor is given,
+    scroll it there. Used by "open this step on the page" (step anchor) and
+    "watch this video on the page" (empty anchor = just switch to the tab).
+    Reuses the same CDP tab pick/wake as capture. Returns False if Chrome/tab
+    can't be reached."""
     async with async_playwright() as pw:
         try:
             browser = await pw.chromium.connect_over_cdp(settings.cdp_url)
@@ -722,15 +741,16 @@ async def scroll_to_anchor(anchor: str) -> bool:
                 return False
             try:
                 await asyncio.wait_for(page.bring_to_front(), timeout=5)
-                await asyncio.wait_for(
-                    page.evaluate(
-                        "(a) => { try { const el = document.querySelector(a); "
-                        "if (el) { el.scrollIntoView({behavior:'smooth', block:'start'}); } "
-                        "else { location.hash = a; } } catch (e) { location.hash = a; } }",
-                        anchor,
-                    ),
-                    timeout=5,
-                )
+                if anchor:
+                    await asyncio.wait_for(
+                        page.evaluate(
+                            "(a) => { try { const el = document.querySelector(a); "
+                            "if (el) { el.scrollIntoView({behavior:'smooth', block:'start'}); } "
+                            "else { location.hash = a; } } catch (e) { location.hash = a; } }",
+                            anchor,
+                        ),
+                        timeout=5,
+                    )
             except Exception:
                 return False
             return True

@@ -67,7 +67,7 @@ class NarrateRequest(BaseModel):
 
 
 class OpenStepRequest(BaseModel):
-    anchor: str
+    anchor: str = ""  # empty = just bring the source tab to the front (e.g. videos)
 
 
 class RevoiceRequest(BaseModel):
