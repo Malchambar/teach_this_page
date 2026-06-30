@@ -8,6 +8,7 @@ correct even when the page is behind a login).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 
@@ -64,7 +65,9 @@ async def _pick_active_page(pages: list[Page]) -> Page | None:
             continue
         fallback = p
         try:
-            if await p.evaluate("document.visibilityState === 'visible'"):
+            if await asyncio.wait_for(
+                p.evaluate("document.visibilityState === 'visible'"), timeout=4
+            ):
                 return p
         except Exception:
             continue
@@ -83,7 +86,17 @@ async (img) => {
               || first(img.getAttribute('srcset')) || '';
     if (real) { try { img.src = real; } catch (e) {} }
   }
-  try { if (img.decode) await img.decode(); } catch (e) {}
+  // Wait for the image to paint, but NEVER block forever: for a lazy/offscreen
+  // or never-loading image, img.decode() hangs (it neither resolves nor rejects),
+  // which would stall the whole capture. Race it against a short timer.
+  try {
+    if (img.decode) {
+      await Promise.race([
+        img.decode().catch(() => {}),
+        new Promise((r) => setTimeout(r, 1200)),
+      ]);
+    }
+  } catch (e) {}
   return { src: img.currentSrc || img.src || '', w: img.naturalWidth || 0, h: img.naturalHeight || 0 };
 }
 """
@@ -115,7 +128,7 @@ async def _fetch_png(page: Page, src: str) -> bytes | None:
         if src.startswith("data:image/png"):
             return base64.b64decode(src.split(",", 1)[1])
         if src.startswith("http"):
-            resp = await page.context.request.get(src)
+            resp = await page.context.request.get(src, timeout=8000)
             if resp.ok:
                 body = await resp.body()
                 if body[:8] == _PNG_MAGIC:
@@ -134,7 +147,9 @@ async def _extract_diagrams(page: Page) -> list[Diagram]:
         try:
             # Resolve lazy-loaded sources and wait for the image to paint, so we
             # can both size it correctly and screenshot it without a blank frame.
-            loaded = await handle.evaluate(_LOAD_JS)
+            # Hard backstop: evaluate() has no timeout of its own, so cap it —
+            # a single pathological image must never freeze the whole capture.
+            loaded = await asyncio.wait_for(handle.evaluate(_LOAD_JS), timeout=6)
             box = await handle.bounding_box()
             disp_w = box["width"] if box else 0
             disp_h = box["height"] if box else 0
@@ -158,7 +173,7 @@ async def _extract_diagrams(page: Page) -> list[Diagram]:
                 dest.write_bytes(data)
             else:
                 await handle.scroll_into_view_if_needed(timeout=2000)
-                await handle.screenshot(path=str(dest))
+                await handle.screenshot(path=str(dest), timeout=8000)
 
             meta = await handle.evaluate(_CONTEXT_JS)
             diagrams.append(
@@ -308,22 +323,26 @@ async def capture_active_tab(on_stage=None) -> PageCapture:
             # backgrounded tab may skip layout (leaving innerText empty) and not
             # finish lazy-loading. The user shouldn't have to switch tabs by hand.
             try:
-                await page.bring_to_front()
+                await asyncio.wait_for(page.bring_to_front(), timeout=5)
                 await page.wait_for_load_state("domcontentloaded", timeout=3000)
                 await page.wait_for_timeout(400)  # let layout / consent JS settle
             except Exception:
                 pass
 
             stage("reading", "Reading the page text…")
-            title = (await page.title() or "").strip()
+            try:
+                title = (await asyncio.wait_for(page.title(), timeout=5) or "").strip()
+            except Exception:
+                title = ""
             server_html = ""  # fetched on demand below; reused for image extraction
 
             # 1) Live rendered DOM first — covers login-gated / JS-rendered pages
             #    (e.g. Cisco) where the server HTML alone wouldn't have the content.
             text = ""
             try:
+                html = await asyncio.wait_for(page.content(), timeout=8)
                 text = trafilatura.extract(
-                    await page.content(), include_comments=False, include_tables=True
+                    html, include_comments=False, include_tables=True
                 ) or ""
             except Exception:
                 pass
@@ -352,17 +371,26 @@ async def capture_active_tab(on_stage=None) -> PageCapture:
             # 3) Last resort: visible text straight from the DOM.
             if len(text.strip()) < 200:
                 try:
-                    dom_text = await page.evaluate(_DOM_TEXT_JS)
+                    dom_text = await asyncio.wait_for(page.evaluate(_DOM_TEXT_JS), timeout=6)
                 except Exception:
                     dom_text = ""
                 if len(dom_text.strip()) > len(text.strip()):
                     text = dom_text
             stage("reading", "Capturing diagrams…")
-            diagrams = await _extract_diagrams(page)
-            # If the live DOM gave nothing (ad-poisoned page), pull images out of
-            # the server HTML and download them through the authenticated session.
-            if not diagrams and server_html:
-                diagrams = await _diagrams_from_html(page, server_html, page.url)
+            try:
+                diagrams = await _extract_diagrams(page)
+            except Exception:
+                diagrams = []
+            # The live DOM often exposes only above-the-fold images on lazy-loading
+            # how-to pages (and none at all on ad-poisoned ones), so when we have the
+            # server HTML, pull its full image set and keep whichever is richer.
+            if server_html:
+                try:
+                    html_diagrams = await _diagrams_from_html(page, server_html, page.url)
+                    if len(html_diagrams) > len(diagrams):
+                        diagrams = html_diagrams
+                except Exception:
+                    pass
 
             if not text.strip() and not diagrams:
                 snippet = ""
