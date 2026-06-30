@@ -63,6 +63,13 @@
       <label class="toggle">
         <input type="checkbox" id="autoadvance" checked /> Auto-advance
       </label>
+      <label>Steps
+        <select id="step-mode" title="Step Mode: one segment per step (with a per-step image slideshow) for how-to / repair pages">
+          <option value="auto" selected>Auto</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
       <!-- "Save diagrams" export intentionally disabled to avoid retaining the
            source page's copyrighted images. Preserved (here + /api/diagrams.zip
            + player.js) so it can be re-enabled for an opt-in client build:
@@ -78,12 +85,18 @@
 
       <section id="stage" class="stage hidden">
         <figure id="diagram-wrap">
+          <button id="slide-prev" class="slide-arrow hidden" title="Previous image">‹</button>
           <img id="diagram" alt="" />
+          <button id="slide-next" class="slide-arrow hidden" title="Next image">›</button>
           <figcaption id="caption"></figcaption>
+          <div id="slide-dots" class="slide-dots hidden"></div>
         </figure>
+        <button id="jump-step" class="jump-step hidden"
+                title="Scroll the original page to this step">↗ Open this step on the page</button>
         <div id="showcard" class="showcard hidden"></div>
 
         <div id="player" class="player">
+          <button id="restart" title="Start the lesson over from the beginning (press Play to begin)">↺</button>
           <button id="prev" title="Back (again to go to previous)">⏮</button>
           <button id="playpause" class="primary" title="Play/Pause">⏸</button>
           <button id="next" title="Next">⏭</button>

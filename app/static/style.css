@@ -170,16 +170,57 @@ main { flex: 1; min-width: 0; padding: 32px 28px; overflow-y: auto; }
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
 }
-.stage figure { margin: 0; text-align: center; }
+.stage figure { margin: 0; text-align: center; position: relative; }
 #diagram {
   max-width: 100%;
-  max-height: 58vh;
+  max-height: 72vh;
   border-radius: var(--radius);
   background: #fff;
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
 }
 #caption { color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+/* Step-mode slideshow: arrows flank the image, dots sit under the caption */
+.slide-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border-2);
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.slide-arrow:hover { background: rgba(0, 0, 0, 0.65); }
+#slide-prev { left: 8px; }
+#slide-next { right: 8px; }
+.slide-dots { display: flex; gap: 7px; justify-content: center; margin-top: 8px; }
+.slide-dots .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-2);
+}
+.slide-dots .dot.on { background: var(--accent); }
+
+.jump-step {
+  display: inline-block;
+  margin: 12px auto 0;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+.jump-step:hover { background: rgba(99, 102, 241, 0.12); }
 
 .showcard {
   margin: 0 auto;

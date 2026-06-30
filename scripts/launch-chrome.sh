@@ -29,4 +29,8 @@ exec "$CHROME" \
   --remote-debugging-port="$PORT" \
   --user-data-dir="$PROFILE_DIR" \
   --no-first-run \
-  --no-default-browser-check
+  --no-default-browser-check \
+  --disable-features=HighEfficiencyModeAvailable,TabDiscarding,IntensiveWakeUpThrottling \
+  --disable-background-timer-throttling \
+  --disable-backgrounding-occluded-windows \
+  --disable-renderer-backgrounding

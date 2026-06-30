@@ -15,6 +15,19 @@ class Diagram(BaseModel):
     description: str = ""  # richer description from the vision engine (split mode)
 
 
+class Step(BaseModel):
+    """One step of a step-by-step instruction page (iFixit, WikiHow, ...).
+
+    Present only for pages that capture as an ordered procedure; image_idxs point
+    into PageCapture.diagrams, anchor is a same-page fragment to scroll to."""
+
+    number: str = ""  # e.g. "Step 1" or "1" (as shown on the page)
+    title: str = ""
+    text: str = ""
+    image_idxs: list[int] = []  # indices into PageCapture.diagrams
+    anchor: str = ""  # e.g. "#s385022" — scroll the page to this step
+
+
 class PageCapture(BaseModel):
     """Everything pulled from the active Chrome tab."""
 
@@ -22,6 +35,7 @@ class PageCapture(BaseModel):
     title: str
     text: str
     diagrams: list[Diagram] = []
+    steps: list[Step] = []  # non-empty only for recognized step-by-step pages
 
 
 class Segment(BaseModel):
@@ -29,9 +43,12 @@ class Segment(BaseModel):
 
     idx: int
     speak: str
-    image_idx: int | None = None  # index into PageCapture.diagrams
+    image_idx: int | None = None  # index into PageCapture.diagrams (single-image / legacy)
+    image_idxs: list[int] = []  # step-mode: a group of diagrams shown as a slideshow
     show: str = ""  # on-screen text for this segment (example/scenario/definition)
     pause: bool = False  # stop here (e.g. a content review question) — don't auto-advance
+    step_idx: int | None = None  # step-mode: which PageCapture.steps / Lesson.steps entry
+    source_anchor: str | None = None  # step-mode: same-page fragment to "open this step"
     audio_path: str | None = None  # filled in by TTS
 
 
@@ -42,3 +59,4 @@ class Lesson(BaseModel):
     title: str
     segments: list[Segment]
     diagrams: list[Diagram]
+    steps: list[Step] = []  # step-mode: ordered steps (number/title) for labels/links

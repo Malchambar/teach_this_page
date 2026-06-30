@@ -16,10 +16,14 @@ import trafilatura
 from playwright.async_api import Page, async_playwright
 
 from app.config import DIAGRAMS_DIR, settings
-from app.models import Diagram, PageCapture
+from app.models import Diagram, PageCapture, Step
 
 # Ignore tiny images (icons, spacers, logos); keep real diagrams.
-MIN_W, MIN_H = 180, 110
+# Minimum natural size for an image to count as a "diagram". Set above small
+# secondary thumbnails (e.g. iFixit shows ~186x140 thumbnail strips beside each
+# step's main 593-wide image) so those don't eat the diagram budget and crowd
+# out later steps — we want one real image per step, not three tiny ones.
+MIN_W, MIN_H = 240, 160
 MAX_DIAGRAMS = 25
 
 # Per-image, in the browser: pull alt text and nearby caption/heading for context.
@@ -54,16 +58,19 @@ def _is_player_url(url: str) -> bool:
 
 
 async def _pick_active_page(pages: list[Page]) -> Page | None:
-    """Choose the visible http(s) tab; fall back to the last http(s) page.
+    """Pick the lesson tab: prefer a visible http(s) tab, else any loaded
+    http(s) tab. The app's own player tab is always skipped.
 
-    The app's own player tab is skipped, so capturing always targets the lesson
-    page even if the player happens to be the foreground tab.
+    Returns None if every non-player tab reports an empty url — Chrome has
+    *discarded* (frozen) it, so Playwright has no live page for it. The caller
+    then wakes it over raw CDP (see _wake_lesson_tab).
     """
+    others = [p for p in pages if not _is_player_url(p.url)]
     fallback: Page | None = None
-    for p in pages:
-        if not p.url.startswith("http") or _is_player_url(p.url):
+    for p in others:
+        if not p.url.startswith("http"):
             continue
-        fallback = p
+        fallback = fallback or p
         try:
             if await asyncio.wait_for(
                 p.evaluate("document.visibilityState === 'visible'"), timeout=4
@@ -72,6 +79,65 @@ async def _pick_active_page(pages: list[Page]) -> Page | None:
         except Exception:
             continue
     return fallback
+
+
+async def _cdp_page_targets(cdp_url: str) -> list[dict]:
+    """Raw CDP /json/list — the authoritative tab list (real url/title/id) even
+    for discarded tabs that Playwright surfaces with an empty url."""
+    import json
+    import urllib.request
+
+    def _get() -> list[dict]:
+        url = cdp_url.rstrip("/") + "/json/list"
+        with urllib.request.urlopen(url, timeout=4) as r:
+            return json.load(r)
+
+    try:
+        loop = asyncio.get_event_loop()
+        targets = await loop.run_in_executor(None, _get)
+    except Exception:
+        return []
+    return [t for t in targets if t.get("type") == "page"]
+
+
+async def _wake_lesson_tab(browser, cdp_url: str) -> Page | None:
+    """Last resort when every non-player tab is discarded (empty url in
+    Playwright): find the lesson tab via raw CDP and *activate* it, which makes
+    Chrome reload the discarded tab without needing an attached live page. Then
+    return the now-live Playwright page once its url resolves.
+    """
+    import urllib.request
+
+    targets = await _cdp_page_targets(cdp_url)
+    cand = [
+        t for t in targets
+        if t.get("url", "").startswith("http") and not _is_player_url(t["url"])
+    ]
+    if not cand:
+        return None
+    target_id, want = cand[0]["id"], cand[0]["url"]
+
+    def _activate() -> None:
+        try:
+            urllib.request.urlopen(
+                cdp_url.rstrip("/") + f"/json/activate/{target_id}", timeout=4
+            ).read()
+        except Exception:
+            pass
+
+    await asyncio.get_event_loop().run_in_executor(None, _activate)
+
+    # Activation reloads the discarded tab; wait for its Playwright page to
+    # report a real url (same target id, so the page object updates in place).
+    for _ in range(24):  # ~7s
+        for ctx in browser.contexts:
+            for p in ctx.pages:
+                if p.url == want or (
+                    p.url.startswith("http") and not _is_player_url(p.url)
+                ):
+                    return p
+        await asyncio.sleep(0.3)
+    return None
 
 
 # Many sites (WikiHow, news, docs...) lazy-load images: the real URL lives in
@@ -119,6 +185,19 @@ _DOM_TEXT_JS = """
 _DIAG_JS = "() => (document.body ? document.body.innerText : '').replace(/\\s+/g,' ').trim().slice(0, 160)"
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+# iFixit (and similar guide CDNs) serve one image at several sizes via a
+# filename suffix; the page displays the ~593px ".standard", which looks small
+# on a large screen. Bump known-small suffixes to ".large" (~1024px) when we
+# fetch. If that variant 404s, the caller falls back to a screenshot.
+_IFIXIT_SMALL = {"thumbnail", "200x150", "standard", "medium"}
+
+
+def _hires_src(url: str) -> str:
+    m = re.match(r"(https://guide-images\.cdn\.ifixit\.com/\S+)\.([a-z0-9]+)$", url)
+    if m and m.group(2) in _IFIXIT_SMALL:
+        return f"{m.group(1)}.large"
+    return url
 
 
 async def _fetch_png(page: Page, src: str) -> bytes | None:
@@ -168,7 +247,7 @@ async def _extract_diagrams(page: Page) -> list[Diagram]:
             # (JPG/WebP, common on the open web) fall back to a screenshot, which
             # is reliable now that the image is loaded.
             src = loaded.get("src", "")
-            data = await _fetch_png(page, src) if src else None
+            data = await _fetch_png(page, _hires_src(src)) if src else None
             if data:
                 dest.write_bytes(data)
             else:
@@ -271,7 +350,7 @@ async def _diagrams_from_html(page: Page, html: str, base_url: str) -> list[Diag
         if (w and w < MIN_W) or (h and h < MIN_H):
             continue
         try:
-            resp = await page.context.request.get(url, timeout=8000)
+            resp = await page.context.request.get(_hires_src(url), timeout=8000)
             if not resp.ok:
                 continue
             body = await resp.body()
@@ -294,11 +373,170 @@ async def _diagrams_from_html(page: Page, html: str, base_url: str) -> list[Diag
     return diagrams
 
 
-async def capture_active_tab(on_stage=None) -> PageCapture:
+# --- Step-by-step instruction pages (iFixit; WikiHow later) ----------------
+#
+# Some pages ARE an ordered procedure: each step has its own text, image group,
+# and a page anchor. For these we capture the structure so the lesson can run
+# one segment per step with a per-step image slideshow and a "jump to this step"
+# link, instead of flattening everything into one blob. iFixit selectors are
+# confirmed against the live DOM: container `.step` (id "s<NNN>" doubles as the
+# scroll anchor), a "Step N ..." title line, and per-step <img> tags served from
+# guide-images.cdn.ifixit.com.
+STEP_MAX_IMAGES = 220  # safety cap across all steps (a 48-step guide has ~100+)
+STEP_MAX_PER_STEP = 5  # cap images per single step so one step can't hog the budget
+
+_STEPS_JS = r"""
+() => {
+  const all = [...document.querySelectorAll('.step')];
+  // keep only top-level .step nodes (iFixit nests image divs with .step-ish ids)
+  const top = all.filter(e => !all.some(o => o !== e && o.contains(e)));
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  const steps = [];
+  for (const el of top) {
+    const text = norm(el.innerText);
+    if (!text) continue;
+    const hdrEl = el.querySelector('.step-title, .step-title-text, .step-number, h2, h3');
+    const header = hdrEl ? norm(hdrEl.innerText) : '';
+    const m = (header || text).match(/^Step\s+\d+/i);
+    const number = m ? m[0] : '';
+    const title = header ? norm(header.replace(/^Step\s+\d+\s*/i, '')) : '';
+    const imgs = [...el.querySelectorAll('img')]
+      .map(i => {
+        const ss = i.getAttribute('srcset') || i.getAttribute('data-srcset') || '';
+        const first = ss ? ss.split(',')[0].trim().split(' ')[0] : '';
+        return i.currentSrc || i.src || i.getAttribute('data-src') || first || '';
+      })
+      .filter(u => u.includes('guide-images.cdn.ifixit.com'));
+    const seen = new Set(), urls = [];
+    for (const u of imgs) {
+      const h = (u.match(/\/igi\/([^.\/]+)\./) || [])[1];
+      if (h && !seen.has(h)) { seen.add(h); urls.push(u); }
+    }
+    steps.push({ anchor: el.id ? '#' + el.id : '', number, title, text, imgs: urls });
+  }
+  return steps;
+}
+"""
+
+
+def _is_step_page(url: str) -> bool:
+    """True for pages we know capture cleanly as an ordered procedure."""
+    return bool(re.search(r"ifixit\.com/(Guide|Teardown)/", url, re.I))
+
+
+def _img_key(url: str) -> str:
+    """Dedup key for an image across steps: for iFixit the CDN hash identifies the
+    image regardless of size suffix; otherwise the URL itself."""
+    m = re.search(r"/igi/([^./]+)\.", url)
+    return m.group(1) if m else url
+
+
+_SCROLL_JS = (
+    "async () => { const h = document.body.scrollHeight; "
+    "for (let y = 0; y < h; y += 700) { window.scrollTo(0, y); "
+    "await new Promise(r => setTimeout(r, 80)); } window.scrollTo(0, 0); }"
+)
+
+
+async def _extract_steps(page: Page) -> list[dict]:
+    """Run the step extractor in the page; [] if it isn't a step page after all.
+
+    iFixit lazy-loads step images as you scroll, so below-the-fold steps would
+    otherwise have placeholder srcs. Scroll the whole page first to force every
+    step image to resolve a real URL, then read."""
+    try:
+        await asyncio.wait_for(page.evaluate(_SCROLL_JS), timeout=12)
+        await page.wait_for_timeout(500)
+    except Exception:
+        pass
+    try:
+        raw = await asyncio.wait_for(page.evaluate(_STEPS_JS), timeout=8)
+    except Exception:
+        return []
+    return raw if isinstance(raw, list) else []
+
+
+async def _build_step_diagrams(page: Page, raw: list[dict]) -> tuple[list[Diagram], list[Step]]:
+    """Download each step's images (deduped across steps, capped per-step and
+    overall) and map them to Steps. Downloads run concurrently so a long guide
+    (100+ images) doesn't stall. Returns (diagrams, steps) where each
+    Step.image_idxs indexes into diagrams."""
+    # 1) Gather unique images in document order; record each step's keys.
+    order: list[tuple[str, str]] = []  # (key, url), deduped, order-preserving
+    seen: set[str] = set()
+    step_keys: list[list[str]] = []
+    for s in raw:
+        keys: list[str] = []
+        for url in s.get("imgs", [])[:STEP_MAX_PER_STEP]:
+            key = _img_key(url)
+            if key not in seen:
+                if len(order) >= STEP_MAX_IMAGES:
+                    continue  # over budget — skip new images, keep references below
+                seen.add(key)
+                order.append((key, url))
+            keys.append(key)
+        step_keys.append(keys)
+
+    # 2) Download concurrently (bounded), keep only valid images.
+    results: dict[str, tuple[bytes, str]] = {}
+    sem = asyncio.Semaphore(8)
+
+    async def fetch(key: str, url: str) -> None:
+        async with sem:
+            try:
+                resp = await page.context.request.get(_hires_src(url), timeout=8000)
+                if not resp.ok:
+                    return
+                body = await resp.body()
+            except Exception:
+                return  # slow/broken image — skip, never stall the capture
+            ext = _img_ext(body, url)
+            if ext is None or len(body) < 3000:
+                return
+            results[key] = (body, ext)
+
+    await asyncio.gather(*(fetch(k, u) for k, u in order))
+
+    # 3) Assign diagram idxs in document order and write the files.
+    diagrams: list[Diagram] = []
+    key_to_idx: dict[str, int] = {}
+    for key, _ in order:
+        if key not in results:
+            continue
+        body, ext = results[key]
+        idx = len(diagrams)
+        name = f"diagram-{idx}.{ext}"
+        (DIAGRAMS_DIR / name).write_bytes(body)
+        key_to_idx[key] = idx
+        diagrams.append(Diagram(idx=idx, png_path=name))
+
+    # 4) Build steps; tag each step's diagrams with the step title for captions.
+    steps: list[Step] = []
+    for s, keys in zip(raw, step_keys):
+        idxs = [key_to_idx[k] for k in keys if k in key_to_idx]
+        for i in idxs:
+            diagrams[i].alt = s.get("title", "")
+            diagrams[i].context = s.get("title", "")
+        steps.append(
+            Step(
+                number=s.get("number", ""),
+                title=s.get("title", ""),
+                text=s.get("text", ""),
+                image_idxs=idxs,
+                anchor=s.get("anchor", ""),
+            )
+        )
+    return diagrams, steps
+
+
+async def capture_active_tab(on_stage=None, step_mode: str = "auto") -> PageCapture:
     """Attach to the running Chrome and capture whatever tab is in front.
 
     `on_stage(stage, label)`, if given, is called as work progresses so the UI
     can narrate it ("Reading the page text…", "Capturing diagrams…").
+
+    `step_mode` controls Step Mode capture: "auto" (detect step pages),
+    "on" (force the step extractor), or "off" (always use the freeform flow).
     """
     def stage(s: str, label: str) -> None:
         if on_stage:
@@ -317,7 +555,25 @@ async def capture_active_tab(on_stage=None) -> PageCapture:
             pages = [p for ctx in browser.contexts for p in ctx.pages]
             page = await _pick_active_page(pages)
             if page is None:
-                raise ConnectionError("No open web page found in Chrome to narrate.")
+                # Every non-player tab is discarded (Playwright sees an empty
+                # url). Wake the lesson tab over raw CDP and re-attach.
+                page = await _wake_lesson_tab(browser, settings.cdp_url)
+            if page is None:
+                # Still nothing — report the authoritative CDP tab list so a page
+                # open in the wrong Chrome (or no lesson tab at all) is obvious.
+                targets = await _cdp_page_targets(settings.cdp_url)
+                seen = [
+                    t.get("url", "")[:70]
+                    for t in targets
+                    if not _is_player_url(t.get("url", ""))
+                ]
+                detail = "; ".join(s for s in seen if s) or "(none)"
+                raise ConnectionError(
+                    "No readable web page found in the app's Chrome. Non-player "
+                    f"tabs it can see right now: {detail}. Open your lesson page in "
+                    "the same Chrome window the player launched in, let it finish "
+                    "loading, then click Teach this page again."
+                )
 
             # Bring the lesson tab to the front so it's actually rendered: a
             # backgrounded tab may skip layout (leaving innerText empty) and not
@@ -368,29 +624,52 @@ async def capture_active_tab(on_stage=None) -> PageCapture:
                 except Exception:
                     pass
 
-            # 3) Last resort: visible text straight from the DOM.
-            if len(text.strip()) < 200:
-                try:
-                    dom_text = await asyncio.wait_for(page.evaluate(_DOM_TEXT_JS), timeout=6)
-                except Exception:
-                    dom_text = ""
-                if len(dom_text.strip()) > len(text.strip()):
-                    text = dom_text
-            stage("reading", "Capturing diagrams…")
+            # 3) Visible text straight from the DOM. trafilatura's article
+            #    heuristics under-extract structured step-by-step pages (e.g.
+            #    iFixit renders 14k chars of steps but trafilatura keeps only ~5k,
+            #    dropping the later steps). The raw DOM textContent is noisier
+            #    (nav/footer) but complete, so prefer it when it's much larger —
+            #    a strong signal trafilatura missed the bulk of the content.
             try:
-                diagrams = await _extract_diagrams(page)
+                dom_text = await asyncio.wait_for(page.evaluate(_DOM_TEXT_JS), timeout=6)
             except Exception:
-                diagrams = []
-            # The live DOM often exposes only above-the-fold images on lazy-loading
-            # how-to pages (and none at all on ad-poisoned ones), so when we have the
-            # server HTML, pull its full image set and keep whichever is richer.
-            if server_html:
+                dom_text = ""
+            cur = len(text.strip())
+            if len(dom_text.strip()) > max(cur * 2, 600):
+                text = dom_text
+            # Step Mode: a recognized step-by-step page (or forced) is captured as
+            # an ordered procedure — per-step text, image group, and anchor — so the
+            # lesson can do one segment per step. Falls through to the freeform flow
+            # if the extractor finds nothing.
+            steps: list[Step] = []
+            diagrams: list[Diagram] = []
+            if step_mode == "on" or (step_mode == "auto" and _is_step_page(page.url)):
+                stage("reading", "Capturing steps…")
+                raw = await _extract_steps(page)
+                if raw:
+                    diagrams, steps = await _build_step_diagrams(page, raw)
+                    joined = "\n\n".join(
+                        f"{s.number} {s.title}\n{s.text}".strip() for s in steps
+                    ).strip()
+                    if joined:
+                        text = joined
+
+            if not steps:
+                stage("reading", "Capturing diagrams…")
                 try:
-                    html_diagrams = await _diagrams_from_html(page, server_html, page.url)
-                    if len(html_diagrams) > len(diagrams):
-                        diagrams = html_diagrams
+                    diagrams = await _extract_diagrams(page)
                 except Exception:
-                    pass
+                    diagrams = []
+                # The live DOM often exposes only above-the-fold images on lazy-loading
+                # how-to pages (and none at all on ad-poisoned ones), so when we have the
+                # server HTML, pull its full image set and keep whichever is richer.
+                if server_html:
+                    try:
+                        html_diagrams = await _diagrams_from_html(page, server_html, page.url)
+                        if len(html_diagrams) > len(diagrams):
+                            diagrams = html_diagrams
+                    except Exception:
+                        pass
 
             if not text.strip() and not diagrams:
                 snippet = ""
@@ -415,7 +694,45 @@ async def capture_active_tab(on_stage=None) -> PageCapture:
                 except Exception:
                     pass
 
-            return PageCapture(url=page.url, title=title, text=text, diagrams=diagrams)
+            return PageCapture(
+                url=page.url, title=title, text=text, diagrams=diagrams, steps=steps
+            )
         finally:
             # Detach without closing the user's real browser.
+            await browser.close()
+
+
+async def scroll_to_anchor(anchor: str) -> bool:
+    """Bring the lesson tab to the front and scroll it to a step anchor (Step
+    Mode "open this step on the page"). Reuses the same CDP tab pick/wake as
+    capture. Returns False if Chrome/tab can't be reached."""
+    if not anchor:
+        return False
+    async with async_playwright() as pw:
+        try:
+            browser = await pw.chromium.connect_over_cdp(settings.cdp_url)
+        except Exception:
+            return False
+        try:
+            pages = [p for ctx in browser.contexts for p in ctx.pages]
+            page = await _pick_active_page(pages)
+            if page is None:
+                page = await _wake_lesson_tab(browser, settings.cdp_url)
+            if page is None:
+                return False
+            try:
+                await asyncio.wait_for(page.bring_to_front(), timeout=5)
+                await asyncio.wait_for(
+                    page.evaluate(
+                        "(a) => { try { const el = document.querySelector(a); "
+                        "if (el) { el.scrollIntoView({behavior:'smooth', block:'start'}); } "
+                        "else { location.hash = a; } } catch (e) { location.hash = a; } }",
+                        anchor,
+                    ),
+                    timeout=5,
+                )
+            except Exception:
+                return False
+            return True
+        finally:
             await browser.close()

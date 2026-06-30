@@ -14,6 +14,11 @@ _OFF = {"off", "none", ""}
 # The most recently captured page, kept as reference context for the chat panel.
 _last_context: dict | None = None
 
+# Full detail of the last build (page text actually used, diagrams, and the
+# segment script), exposed at /api/debug for troubleshooting. In-memory only —
+# never written to disk, so it's gone when the app exits (no-retention posture).
+_last_debug: dict | None = None
+
 # Coarse build progress, polled by the UI so it can narrate what's happening
 # ("Reading the page…", "Writing the lesson…") instead of a silent wait.
 _progress: dict = {"stage": "idle", "label": ""}
@@ -32,6 +37,10 @@ def last_context() -> dict | None:
     return _last_context
 
 
+def get_debug() -> dict | None:
+    return _last_debug
+
+
 def _clear_diagrams() -> None:
     for f in DIAGRAMS_DIR.glob("*.png"):
         f.unlink(missing_ok=True)
@@ -41,7 +50,9 @@ def _norm(name: str) -> str:
     return name.lower().replace("-", "_")
 
 
-async def build_lesson(vision: str | None = None, writer: str | None = None) -> Lesson:
+async def build_lesson(
+    vision: str | None = None, writer: str | None = None, step_mode: str = "auto"
+) -> Lesson:
     """Read the active Chrome tab and return the narration script (no audio yet).
 
     Engine roles (see config): a `vision` engine describes the diagrams and a
@@ -58,7 +69,7 @@ async def build_lesson(vision: str | None = None, writer: str | None = None) -> 
 
     # capture_active_tab raises a diagnostic ValueError if the page yields nothing.
     try:
-        capture = await capture_active_tab(on_stage=_set_progress)
+        capture = await capture_active_tab(on_stage=_set_progress, step_mode=step_mode)
     except Exception:
         _set_progress("idle", "")
         raise
@@ -67,7 +78,14 @@ async def build_lesson(vision: str | None = None, writer: str | None = None) -> 
     writer = writer or settings.writer_provider or settings.llm_provider
     brain = get_provider(writer)
 
-    if _norm(vision) in _OFF:
+    if capture.steps:
+        # Step Mode: the page captured as an ordered procedure. The writer makes
+        # one segment per step from the step text (no images attached, no vision
+        # pass — step photos carry no info the text doesn't); the app maps each
+        # segment to its step's image group + anchor below.
+        _set_progress("writing", f"Writing the lesson — {len(capture.steps)} steps…")
+        segments = await brain.generate_segments(capture, use_images=False)
+    elif _norm(vision) in _OFF:
         _set_progress("writing", "Writing the lesson…")
         segments = await brain.generate_segments(capture, use_images=False)
     elif _norm(vision) == _norm(writer):
@@ -79,9 +97,29 @@ async def build_lesson(vision: str | None = None, writer: str | None = None) -> 
         _set_progress("writing", "Writing the lesson…")
         segments = await brain.generate_segments(capture, use_images=False)
 
+    # Step Mode: attach each segment's step image group + page anchor authoritatively
+    # from the captured steps. Prefer the model's step_idx, but fall back to segment
+    # ORDER when it produced one segment per step (the prompt requires in-order, and
+    # models are unreliable about echoing step_idx — null/str/1-based), so images
+    # attach regardless.
+    if capture.steps:
+        n = len(capture.steps)
+        one_to_one = len(segments) == n
+        for i, s in enumerate(segments):
+            si = s.step_idx
+            if not isinstance(si, int) or not (0 <= si < n):
+                si = i if one_to_one else None
+            if si is None:
+                continue
+            st = capture.steps[si]
+            s.step_idx = si
+            s.image_idxs = list(st.image_idxs)
+            s.image_idx = st.image_idxs[0] if st.image_idxs else None
+            s.source_anchor = st.anchor or None
+
     _set_progress("done", "")
 
-    global _last_context
+    global _last_context, _last_debug
     _last_context = {
         "title": capture.title,
         "url": capture.url,
@@ -91,12 +129,56 @@ async def build_lesson(vision: str | None = None, writer: str | None = None) -> 
             for d in capture.diagrams
         ],
     }
+    _last_debug = {
+        "url": capture.url,
+        "title": capture.title,
+        "engines": {"vision": vision, "writer": writer},
+        "text_chars": len(capture.text or ""),
+        "text": capture.text,
+        "diagram_count": len(capture.diagrams),
+        "diagrams": [
+            {
+                "idx": d.idx,
+                "file": d.png_path.rsplit("/", 1)[-1],
+                "alt": d.alt,
+                "context": d.context,
+                "description": d.description,
+            }
+            for d in capture.diagrams
+        ],
+        "step_count": len(capture.steps),
+        "steps": [
+            {
+                "number": st.number,
+                "title": st.title,
+                "anchor": st.anchor,
+                "image_idxs": st.image_idxs,
+                "text_chars": len(st.text or ""),
+            }
+            for st in capture.steps
+        ],
+        "segment_count": len(segments),
+        "segments": [
+            {
+                "idx": s.idx,
+                "step_idx": s.step_idx,
+                "image_idx": s.image_idx,
+                "image_idxs": s.image_idxs,
+                "source_anchor": s.source_anchor,
+                "pause": s.pause,
+                "show": s.show,
+                "speak": s.speak,
+            }
+            for s in segments
+        ],
+    }
 
     return Lesson(
         url=capture.url,
         title=capture.title,
         segments=segments,
         diagrams=capture.diagrams,
+        steps=capture.steps,
     )
 
 

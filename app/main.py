@@ -63,6 +63,11 @@ class NarrateRequest(BaseModel):
     voice: str | None = None
     vision: str | None = None
     writer: str | None = None
+    step_mode: str = "auto"  # "auto" (detect step pages) | "on" (force) | "off"
+
+
+class OpenStepRequest(BaseModel):
+    anchor: str
 
 
 class RevoiceRequest(BaseModel):
@@ -84,7 +89,9 @@ async def narrate(req: NarrateRequest) -> dict:
     global _last_lesson, _current_voice, _narrate_task
     _narrate_task = asyncio.current_task()
     try:
-        lesson = await build_lesson(vision=req.vision, writer=req.writer)
+        lesson = await build_lesson(
+            vision=req.vision, writer=req.writer, step_mode=req.step_mode
+        )
     except asyncio.CancelledError:
         from app.proc import kill_all
 
@@ -126,6 +133,37 @@ def storage() -> dict:
     """How much generated content (audio/diagrams/descriptions) is on disk now.
     Powers the session storage meter; everything here is cleared on exit."""
     return storage_usage()
+
+
+@app.get("/api/debug")
+def debug(text: bool = True) -> dict:
+    """Troubleshooting dump of the LAST build: the page text actually used, the
+    diagrams captured (idx/file/alt/description), and the full segment script
+    (slide-by-slide). In-memory only, never written to disk. Pass ?text=false to
+    omit the (potentially large) page text and just get the structure + script.
+
+    Examples:
+      curl -s localhost:8765/api/debug | python -m json.tool
+      curl -s 'localhost:8765/api/debug?text=false'   # skip the page text
+    """
+    from app.pipeline import get_debug
+
+    data = get_debug()
+    if data is None:
+        return {"status": "no build yet — run Teach this page first"}
+    if not text:
+        data = {k: v for k, v in data.items() if k != "text"}
+    return data
+
+
+@app.post("/api/open_step")
+async def open_step(req: OpenStepRequest) -> dict:
+    """Step Mode: scroll the existing lesson Chrome tab to a step's anchor so the
+    learner can correlate the narrated step with the real page."""
+    from app.capture import scroll_to_anchor
+
+    ok = await scroll_to_anchor(req.anchor)
+    return {"ok": ok}
 
 
 # NOTE: The "Save diagrams" export is intentionally disabled in the UI (the
@@ -192,6 +230,7 @@ class PrefsRequest(BaseModel):
     vision: str | None = None
     writer: str | None = None
     auto_advance: bool | None = None
+    step_mode: str | None = None
 
 
 @app.post("/api/preferences")

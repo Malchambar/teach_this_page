@@ -21,3 +21,6 @@ models/
 
 # OS
 .DS_Store
+
+# Martin's testing notes
+sites_to_test.md

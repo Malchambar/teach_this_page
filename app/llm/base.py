@@ -66,11 +66,42 @@ Use "pause": false on every other segment.
 Return ONLY JSON of this exact shape:
 {"segments": [{"speak": "<spoken text>", "image_idx": <diagram number or null>, \
 "show": "<on-screen text, or empty string>", \
-"pause": <true to stop for a question, otherwise false>}]}"""
+"pause": <true to stop for a question, otherwise false>, \
+"step_idx": <the step's [number] when following a STEPS list, otherwise null>}]}"""
+
+
+def _build_step_user_text(capture: PageCapture) -> str:
+    """Step-mode prompt: the page is an ordered procedure; the writer must produce
+    exactly one segment per step. The app attaches each step's images and page
+    link, so the model only writes the spoken teaching for each step."""
+    lines = [
+        f"PAGE TITLE: {capture.title}",
+        f"URL: {capture.url}",
+        "",
+        "This page is a STEP-BY-STEP PROCEDURE. Produce EXACTLY ONE segment per step "
+        "below, in the same order. For each segment, set \"step_idx\" to that step's "
+        "number shown in [brackets]. Teach each step in your own voice (don't read it "
+        "verbatim), faithfully — never skip, merge, reorder, or invent a step. Keep "
+        "each segment to 2-4 spoken sentences. Leave image_idx null and show empty: "
+        "the app shows each step's own images and a link to it automatically. Still "
+        "surface any safety warnings on a step clearly.",
+        "",
+        "STEPS:",
+    ]
+    for i, s in enumerate(capture.steps):
+        head = f"[{i}] {s.number} {s.title}".strip()
+        lines.append(head)
+        if s.text:
+            lines.append(s.text[:2000])
+        lines.append("")
+    return "\n".join(lines)
 
 
 def build_user_text(capture: PageCapture) -> str:
-    """The text half of the prompt: page text + a diagram manifest by index."""
+    """The text half of the prompt: page text + a diagram manifest by index, or a
+    step-by-step layout when the page captured as an ordered procedure."""
+    if capture.steps:
+        return _build_step_user_text(capture)
     lines = [f"PAGE TITLE: {capture.title}", f"URL: {capture.url}", "", "PAGE TEXT:"]
     lines.append(capture.text[:MAX_TEXT_CHARS] or "(no extractable text)")
     if capture.diagrams:
@@ -104,6 +135,8 @@ def parse_segments(raw: str) -> list[Segment]:
     segments: list[Segment] = []
     for item in items:
         pause = False
+        step_idx = None
+        image_idxs: list[int] = []
         if isinstance(item, str):
             speak, image_idx = item.strip(), None
             show = ""
@@ -112,14 +145,28 @@ def parse_segments(raw: str) -> list[Segment]:
             image_idx = item.get("image_idx")
             if not isinstance(image_idx, int):
                 image_idx = None
+            raw_idxs = item.get("image_idxs")
+            if isinstance(raw_idxs, list):
+                image_idxs = [x for x in raw_idxs if isinstance(x, int)]
             show = (item.get("show") or "").strip()
             pause = bool(item.get("pause"))
+            step_idx = item.get("step_idx")
+            if not isinstance(step_idx, int):
+                step_idx = None
         else:
             continue
         if not speak:
             continue
         segments.append(
-            Segment(idx=len(segments), speak=speak, image_idx=image_idx, show=show, pause=pause)
+            Segment(
+                idx=len(segments),
+                speak=speak,
+                image_idx=image_idx,
+                image_idxs=image_idxs,
+                show=show,
+                pause=pause,
+                step_idx=step_idx,
+            )
         )
     if not segments:
         raise ValueError(f"Model returned no usable segments. Got: {raw[:200]}")

@@ -7,7 +7,7 @@ import json
 from app.config import DATA_DIR, settings
 
 PREFS_FILE = DATA_DIR / "preferences.json"
-KEYS = ("voice", "speed", "vision", "writer", "auto_advance")
+KEYS = ("voice", "speed", "vision", "writer", "auto_advance", "step_mode")
 
 
 def _defaults() -> dict:
@@ -17,6 +17,7 @@ def _defaults() -> dict:
         "vision": settings.vision_provider,
         "writer": settings.writer_provider,
         "auto_advance": True,
+        "step_mode": "auto",
     }
 
 
