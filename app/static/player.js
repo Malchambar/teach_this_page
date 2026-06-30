@@ -251,6 +251,55 @@ function showSlide(k) {
   renderDots();
 }
 
+function esc(s) {
+  return String(s).replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
+  );
+}
+
+// Render a text-only "show" card with light visual structure: a header line
+// ending in ":" becomes a larger title, plain short lines become bullets, and a
+// trailing full sentence (after some structure) becomes an un-bulleted note.
+// Tolerant of "- " / "•" / "*" prefixes the model may or may not add.
+function renderShow(text) {
+  const lines = String(text)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  let html = "";
+  let items = [];
+  let hadStructure = false;
+  const flush = () => {
+    if (items.length) {
+      html += "<ul>" + items.map((i) => `<li>${esc(i)}</li>`).join("") + "</ul>";
+      items = [];
+    }
+  };
+  lines.forEach((ln) => {
+    const bullet = /^[-•*]\s+/.test(ln);
+    const clean = ln.replace(/^[-•*]\s+/, "");
+    const isHeader = !bullet && clean.endsWith(":");
+    const isSentence =
+      !bullet && !isHeader && /[.!?]$/.test(clean) && clean.split(/\s+/).length >= 5;
+    if (isHeader) {
+      flush();
+      html += `<div class="show-title">${esc(clean)}</div>`;
+      hadStructure = true;
+    } else if (isSentence) {
+      flush();
+      html += hadStructure
+        ? `<p class="show-note">${esc(clean)}</p>`
+        : `<p class="show-plain">${esc(clean)}</p>`;
+    } else {
+      items.push(clean);
+      hadStructure = true;
+    }
+  });
+  flush();
+  return html || `<p class="show-plain">${esc(text)}</p>`;
+}
+
 async function loadSegment(i, autoplay) {
   if (!lesson || i < 0 || i >= lesson.segments.length) return;
   cur = i;
@@ -271,7 +320,7 @@ async function loadSegment(i, autoplay) {
     els.caption.textContent = "";
     // No diagram but on-screen text (example/scenario/definition): show a card.
     if (show) {
-      els.showcard.textContent = show;
+      els.showcard.innerHTML = renderShow(show);
       els.showcard.classList.remove("hidden");
     } else {
       els.showcard.classList.add("hidden");

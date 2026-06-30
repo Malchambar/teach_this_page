@@ -48,7 +48,9 @@ listener through it: name what to look at, trace the flow, point out the key par
 you reference an example, scenario, definition, or key list from the page, copy that \
 content (verbatim or lightly condensed, a few lines) into the "show" field so it \
 appears on screen — never just allude to "the example from the page" without showing \
-it. Leave "show" as an empty string only when the spoken words fully stand alone.
+it. Leave "show" as an empty string only when the spoken words fully stand alone. When \
+the "show" content is a list, begin it with a short header line ending in a colon, put \
+each list item on its own line, and end with any summarizing sentence as a final line.
 - This text is READ ALOUD. No markdown, no code fences, no URLs, no bullet symbols, \
 no citations. Spell out acronyms the first time if useful.
 - Stay faithful to the material in front of you — don't invent facts, specs, or steps \
