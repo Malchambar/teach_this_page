@@ -230,4 +230,6 @@ Ollama
 
 ## License
 
-[MIT](LICENSE)
+[PolyForm Noncommercial License 1.0.0](LICENSE) — free for noncommercial use
+(personal, hobby, study, research, and noncommercial organizations). Commercial
+use requires a separate license from the copyright holder.
