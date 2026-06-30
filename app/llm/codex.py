@@ -16,10 +16,30 @@ from app.proc import run_capture
 from app.llm.base import (
     MAX_VISION_IMAGES,
     SYSTEM_PROMPT,
+    Usage,
     build_user_text,
     parse_segments,
 )
 from app.models import PageCapture, Segment
+
+
+def _codex_usage(stdout: str, model: str) -> Usage:
+    """Parse token usage from codex's `--json` JSONL stream (the last event that
+    carries a usage object — e.g. turn.completed). No cost: codex is subscription."""
+    inp = out = 0
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except Exception:
+            continue
+        u = ev.get("usage")
+        if isinstance(u, dict):
+            inp = int(u.get("input_tokens", inp) or inp)
+            out = int(u.get("output_tokens", out) or out)
+    return Usage(input_tokens=inp, output_tokens=out, model=model or "codex")
 
 # OpenAI structured-output schema (strict: all props required, no extras).
 _SCHEMA = {
@@ -49,6 +69,7 @@ class CodexProvider:
     def __init__(self) -> None:
         self.bin = settings.codex_bin
         self.model = settings.codex_model
+        self.last_usage = Usage()
 
     async def generate_segments(
         self, capture: PageCapture, use_images: bool = True
@@ -70,6 +91,7 @@ class CodexProvider:
 
             args = [
                 self.bin, "exec",
+                "--json",  # emit JSONL events to stdout so we can read token usage
                 "-s", "read-only",
                 "--skip-git-repo-check",
                 "-o", out_file,
@@ -81,7 +103,7 @@ class CodexProvider:
                 args += ["-i", str(DIAGRAMS_DIR / d.png_path)]
 
             try:
-                _, _, err = await run_capture(
+                _, stdout, err = await run_capture(
                     args, input_text=prompt, cwd=str(ROOT), timeout=settings.codex_timeout
                 )
             except FileNotFoundError as e:
@@ -97,4 +119,5 @@ class CodexProvider:
 
         if not result.strip():
             raise RuntimeError(f"codex returned empty output. stderr: {(err or '')[:400]}")
+        self.last_usage = _codex_usage(stdout, self.model)
         return parse_segments(result)

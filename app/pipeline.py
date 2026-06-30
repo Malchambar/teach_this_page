@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from app import tts
+from datetime import datetime, timezone
+
+from app import pricing, tts
 from app.capture import capture_active_tab
 from app.config import DIAGRAMS_DIR, settings
 from app.llm import get_provider
+from app.llm.base import Usage
 from app.llm.vision import describe_diagrams
-from app.models import Lesson
+from app.models import Lesson, LessonStats
 
 _OFF = {"off", "none", ""}
 
@@ -50,6 +53,55 @@ def _norm(name: str) -> str:
     return name.lower().replace("-", "_")
 
 
+def _build_stats(
+    vision: str, writer: str, vision_usage: Usage, writer_usage: Usage
+) -> LessonStats:
+    """Assemble the session stats card from the vision + writer usage, estimating
+    cost from pricing when the engine doesn't report it directly."""
+    v_prov = vision or "off"
+    w_prov = writer or ""
+
+    def _pass_cost(provider: str, u: Usage) -> float:
+        if u.cost_usd is not None:  # engine reported real cost (Claude Code)
+            return u.cost_usd
+        return pricing.estimate_cost(provider, u.model, u.input_tokens, u.output_tokens) or 0.0
+
+    in_tok = vision_usage.input_tokens + writer_usage.input_tokens
+    out_tok = vision_usage.output_tokens + writer_usage.output_tokens
+    cost = round(_pass_cost(v_prov, vision_usage) + _pass_cost(w_prov, writer_usage), 6)
+
+    used = [p for p in (v_prov, w_prov) if p and p != "off"]
+    kinds = {pricing.engine_billing(p) for p in used} or {"local"}
+    billing = next(iter(kinds)) if len(kinds) == 1 else "mixed"
+    note = {
+        "subscription": (
+            "These engines ran on your subscription via the CLI — no per-token charge "
+            "was billed for this session. The figure above is an estimate at published "
+            "API rates."
+        ),
+        "local": "Ran locally on your own machine — no cost.",
+        "api": "Billed to your API key at published rates (the figure above is an estimate).",
+        "mixed": (
+            "Mixed engines: the CLI/subscription parts cost nothing per token; any API "
+            "engine is billed to your key. The figure above is an estimate."
+        ),
+    }[billing]
+
+    return LessonStats(
+        vision_provider=v_prov,
+        writer_provider=w_prov,
+        vision_model=vision_usage.model,
+        writer_model=writer_usage.model,
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+        tokens_estimated=vision_usage.estimated or writer_usage.estimated,
+        estimated_cost_usd=(cost if (in_tok or out_tok) else None),
+        billing=billing,
+        cost_note=note,
+        built_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
 async def build_lesson(
     vision: str | None = None, writer: str | None = None, step_mode: str = "auto"
 ) -> Lesson:
@@ -78,6 +130,7 @@ async def build_lesson(
     writer = writer or settings.writer_provider or settings.llm_provider
     brain = get_provider(writer)
 
+    vision_usage = Usage()
     if capture.steps:
         # Step Mode: the page captured as an ordered procedure. The writer makes
         # one segment per step from the step text (no images attached, no vision
@@ -93,9 +146,12 @@ async def build_lesson(
         segments = await brain.generate_segments(capture, use_images=True)
     else:
         _set_progress("vision", f"Looking at {len(capture.diagrams)} diagram(s)…")
-        await describe_diagrams(vision, capture.diagrams)
+        vision_usage = await describe_diagrams(vision, capture.diagrams)
         _set_progress("writing", "Writing the lesson…")
         segments = await brain.generate_segments(capture, use_images=False)
+
+    writer_usage = getattr(brain, "last_usage", None) or Usage()
+    stats = _build_stats(vision, writer, vision_usage, writer_usage)
 
     # Step Mode: attach each segment's step image group + page anchor authoritatively
     # from the captured steps. Prefer the model's step_idx, but fall back to segment
@@ -133,6 +189,7 @@ async def build_lesson(
         "url": capture.url,
         "title": capture.title,
         "engines": {"vision": vision, "writer": writer},
+        "stats": stats.model_dump(),
         "text_chars": len(capture.text or ""),
         "text": capture.text,
         "diagram_count": len(capture.diagrams),
@@ -179,6 +236,7 @@ async def build_lesson(
         segments=segments,
         diagrams=capture.diagrams,
         steps=capture.steps,
+        stats=stats,
     )
 
 

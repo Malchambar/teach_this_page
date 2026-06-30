@@ -15,6 +15,7 @@ from app.config import DIAGRAMS_DIR, settings
 from app.llm.base import (
     MAX_VISION_IMAGES,
     SYSTEM_PROMPT,
+    Usage,
     build_user_text,
     parse_segments,
 )
@@ -61,6 +62,7 @@ class OpenAICompatProvider:
             )
         self.client = AsyncOpenAI(base_url=base_url, api_key=key)
         self.model = model
+        self.last_usage = Usage()
 
     async def generate_segments(
         self, capture: PageCapture, use_images: bool = True
@@ -78,5 +80,11 @@ class OpenAICompatProvider:
                 {"role": "user", "content": content},
             ],
             max_tokens=8192,
+        )
+        u = getattr(resp, "usage", None)
+        self.last_usage = Usage(
+            input_tokens=int(getattr(u, "prompt_tokens", 0) or 0),
+            output_tokens=int(getattr(u, "completion_tokens", 0) or 0),
+            model=getattr(resp, "model", "") or self.model,
         )
         return parse_segments(resp.choices[0].message.content or "")

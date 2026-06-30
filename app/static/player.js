@@ -37,6 +37,7 @@ const els = {
   slideNext: $("slide-next"),
   slideDots: $("slide-dots"),
   videoOverlay: $("video-overlay"),
+  statsPanel: $("stats-panel"),
 };
 
 // Show how much local disk this session's generated audio/diagrams occupy
@@ -229,6 +230,27 @@ function segImages(seg) {
   return idxs.map((i) => byIdx[i]).filter(Boolean);
 }
 
+// Session-stats card, shown on the final slide. Cost is an ESTIMATE; the note
+// explains that the CLI/subscription engines billed nothing for this run.
+function renderStats(s) {
+  const num = (n) => (n || 0).toLocaleString();
+  const eng = (p, m) =>
+    !p || p === "off" ? "—" : esc(p) + (m && m !== p ? ` · ${esc(m)}` : "");
+  const cost =
+    s.estimated_cost_usd != null ? `$${Number(s.estimated_cost_usd).toFixed(4)}` : "n/a";
+  const approx = s.tokens_estimated ? " (approx)" : "";
+  return (
+    `<div class="stats-title">Session stats</div>` +
+    `<dl class="stats-grid">` +
+    `<dt>Vision engine</dt><dd>${eng(s.vision_provider, s.vision_model)}</dd>` +
+    `<dt>Writer engine</dt><dd>${eng(s.writer_provider, s.writer_model)}</dd>` +
+    `<dt>Tokens${approx}</dt><dd>${num(s.input_tokens)} in · ${num(s.output_tokens)} out</dd>` +
+    `<dt>Est. cost (API-equiv.)</dt><dd>${cost}</dd>` +
+    `</dl>` +
+    `<div class="stats-note">${esc(s.cost_note || "")}</div>`
+  );
+}
+
 function stepLabel(seg) {
   if (seg && seg.step_idx != null && lesson.steps && lesson.steps[seg.step_idx]) {
     const st = lesson.steps[seg.step_idx];
@@ -371,6 +393,16 @@ async function loadSegment(i, autoplay) {
 
   els.transcript.textContent = seg.speak;
   els.pausenote.classList.toggle("hidden", !seg.pause);
+  // Session stats appear only on the final (summary) slide.
+  if (els.statsPanel) {
+    const isFinal = i === lesson.segments.length - 1;
+    if (isFinal && lesson.stats) {
+      els.statsPanel.innerHTML = renderStats(lesson.stats);
+      els.statsPanel.classList.remove("hidden");
+    } else {
+      els.statsPanel.classList.add("hidden");
+    }
+  }
 
   // Subtle fade as each segment comes up.
   els.stage.classList.remove("fade");

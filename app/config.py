@@ -59,6 +59,10 @@ class Settings:
 
     cdp_url: str = os.getenv("CDP_URL", "http://localhost:9222")
 
+    # Optional URL to refresh model pricing from when data/pricing.json goes stale
+    # (>7 days). Empty = keep the bundled/local rates (no network).
+    pricing_url: str = os.getenv("PRICING_URL", "")
+
     # The debugging Chrome (must match scripts/launch-chrome.sh) — the player
     # opens in this profile, not your personal Chrome.
     chrome_app: str = os.getenv(

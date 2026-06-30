@@ -10,6 +10,7 @@ from app.config import DIAGRAMS_DIR, settings
 from app.llm.base import (
     MAX_VISION_IMAGES,
     SYSTEM_PROMPT,
+    Usage,
     build_user_text,
     parse_segments,
 )
@@ -25,6 +26,7 @@ class ClaudeProvider:
             )
         self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
         self.model = settings.claude_model
+        self.last_usage = Usage()
 
     async def generate_segments(
         self, capture: PageCapture, use_images: bool = True
@@ -51,4 +53,10 @@ class ClaudeProvider:
             messages=[{"role": "user", "content": content}],
         )
         text = "".join(b.text for b in msg.content if b.type == "text")
+        u = getattr(msg, "usage", None)
+        self.last_usage = Usage(
+            input_tokens=int(getattr(u, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(u, "output_tokens", 0) or 0),
+            model=getattr(msg, "model", "") or self.model,
+        )
         return parse_segments(text)

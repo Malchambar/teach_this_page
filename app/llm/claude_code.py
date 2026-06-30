@@ -14,8 +14,10 @@ from app.proc import run_capture
 from app.llm.base import (
     MAX_VISION_IMAGES,
     SYSTEM_PROMPT,
+    Usage,
     build_user_text,
     parse_segments,
+    usage_from_claude_envelope,
 )
 from app.models import PageCapture, Segment
 
@@ -24,6 +26,7 @@ class ClaudeCodeProvider:
     def __init__(self) -> None:
         self.bin = settings.claude_bin
         self.model = settings.claude_code_model
+        self.last_usage = Usage()
 
     def _build_prompt(self, capture: PageCapture, use_images: bool) -> str:
         parts = [SYSTEM_PROMPT, ""]
@@ -74,4 +77,7 @@ class ClaudeCodeProvider:
 
         if env.get("is_error"):
             raise RuntimeError(f"claude returned an error: {str(env.get('result'))[:400]}")
+        self.last_usage = usage_from_claude_envelope(env)
+        if not self.last_usage.model:
+            self.last_usage.model = self.model or "claude_code"
         return parse_segments(env.get("result", ""))

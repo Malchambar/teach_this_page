@@ -51,6 +51,21 @@ def _audio_name(text: str, voice: str, speed: float) -> str:
     return f"seg-{hashlib.sha1(key).hexdigest()[:16]}.wav"
 
 
+_LETTER_SOUNDS = {
+    "A": "ay", "B": "bee", "C": "see", "D": "dee", "E": "ee", "F": "eff",
+    "G": "jee", "H": "aitch", "I": "eye", "J": "jay", "K": "kay", "L": "el",
+    "M": "em", "N": "en", "O": "oh", "P": "pee", "Q": "cue", "R": "ar",
+    "S": "ess", "T": "tee", "U": "you", "V": "vee", "W": "double-u",
+    "X": "ex", "Y": "why", "Z": "zee",
+}
+
+
+def _spell_acronym(acr: str) -> str:
+    """Phonetic letter names so TTS says e.g. API as 'ay pee eye' (a plain 'A'
+    reads as the article 'uh', so spaces alone mispronounce vowel letters)."""
+    return " ".join(_LETTER_SOUNDS.get(ch, ch) for ch in acr)
+
+
 def _clean(text: str) -> str:
     """Make text speakable: turn arrows/symbols into words, drop odd characters.
     Acronyms are spaced here (audio only) so the voice spells them out — DNS ->
@@ -58,9 +73,11 @@ def _clean(text: str) -> str:
     text = text.replace("->", " to ").replace("→", " to ").replace("—", ", ")
     text = re.sub(r"[*_`#>|]", " ", text)  # markdown leftovers
     text = re.sub(r"(?<=\w)/(?=\w)", " ", text)  # CI/CD -> CI CD (not "slash"), TCP/IP, and/or
-    # Space out short all-caps acronyms (2-4 letters: DNS, IP, TCP, EDR, URL) so
-    # they're read letter-by-letter. Longer all-caps (e.g. TALOS) read as words.
-    text = re.sub(r"\b([A-Z]{2,4})\b", lambda m: " ".join(m.group(1)), text)
+    # Spell short all-caps acronyms (2-4 letters: DNS, API, TCP, EDR, URL) PHONETICALLY
+    # so the voice says the letter names. Plain letters fail on vowels — a lone "A"
+    # reads as the article "uh", so "API" became "ah-pee-eye"; the sound map fixes it.
+    # Longer all-caps (e.g. TALOS) are left alone to read as words.
+    text = re.sub(r"\b([A-Z]{2,4})\b", lambda m: _spell_acronym(m.group(1)), text)
     return re.sub(r"\s+", " ", text).strip()
 
 

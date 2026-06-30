@@ -16,6 +16,8 @@ import sys
 import tempfile
 
 from app.config import DESCRIPTIONS_DIR, DIAGRAMS_DIR, ROOT, settings
+from app.llm.base import Usage, estimate_tokens, usage_from_claude_envelope
+from app.llm.codex import _codex_usage
 from app.models import Diagram
 from app.proc import run_capture
 
@@ -70,13 +72,17 @@ def _cache_file(png: bytes, provider: str):
     return DESCRIPTIONS_DIR / f"{key}.txt"
 
 
-async def describe_diagrams(provider: str, diagrams: list[Diagram], concurrency: int = 3) -> None:
-    """Fill each diagram's `.description` using the vision engine (cached, concurrent)."""
+async def describe_diagrams(
+    provider: str, diagrams: list[Diagram], concurrency: int = 3
+) -> Usage:
+    """Fill each diagram's `.description` using the vision engine (cached,
+    concurrent). Returns the summed token/cost usage of the whole vision pass."""
+    total = Usage()
     if provider.lower() in _OFF or not diagrams:
-        return
+        return total
     sem = asyncio.Semaphore(concurrency)
 
-    async def one(d: Diagram) -> None:
+    async def one(d: Diagram) -> Usage:
         async with sem:
             try:
                 # Adaptive vision: only deep-describe informational diagrams. For
@@ -84,27 +90,33 @@ async def describe_diagrams(provider: str, diagrams: list[Diagram], concurrency:
                 # caption text plus the step text carry the instruction, so skip the
                 # expensive vision call — build_user_text falls back to alt/context.
                 if not _alt_says_diagram(d.alt) and _looks_like_photo(DIAGRAMS_DIR / d.png_path):
-                    return
-                d.description = await _describe_cached(provider, d)
+                    return Usage()
+                desc, usage = await _describe_cached(provider, d)
+                d.description = desc
+                return usage
             except Exception as e:  # fall back to alt-text for this one
                 print(f"[vision] describe failed for diagram {d.idx}: {e}", file=sys.stderr)
+                return Usage()
 
-    await asyncio.gather(*(one(d) for d in diagrams))
+    for u in await asyncio.gather(*(one(d) for d in diagrams)):
+        total.add(u)
+    return total
 
 
-async def _describe_cached(provider: str, d: Diagram) -> str:
+async def _describe_cached(provider: str, d: Diagram) -> tuple[str, Usage]:
     path = DIAGRAMS_DIR / d.png_path
     png = path.read_bytes()
     cache = _cache_file(png, provider)
     if cache.exists():
-        return cache.read_text().strip()
-    desc = (await _describe(provider, path)).strip()
+        return cache.read_text().strip(), Usage()  # cache hit = no new tokens
+    desc, usage = await _describe(provider, path)
+    desc = desc.strip()
     if desc:
         cache.write_text(desc)
-    return desc
+    return desc, usage
 
 
-async def _describe(provider: str, path) -> str:
+async def _describe(provider: str, path) -> tuple[str, Usage]:
     p = provider.lower().replace("-", "_")
     if p == "claude_code":
         return await _describe_claude_code(path)
@@ -119,7 +131,7 @@ async def _describe(provider: str, path) -> str:
     raise ValueError(f"Unknown vision provider: {provider!r}")
 
 
-async def _describe_openai_compat(name: str, path) -> str:
+async def _describe_openai_compat(name: str, path) -> tuple[str, Usage]:
     from app.llm.openai_compat import OpenAICompatProvider, image_part
 
     prov = OpenAICompatProvider(name)
@@ -131,10 +143,16 @@ async def _describe_openai_compat(name: str, path) -> str:
             "content": [{"type": "text", "text": DESCRIBE_PROMPT}, image_part(path)],
         }],
     )
-    return resp.choices[0].message.content or ""
+    u = getattr(resp, "usage", None)
+    usage = Usage(
+        input_tokens=int(getattr(u, "prompt_tokens", 0) or 0),
+        output_tokens=int(getattr(u, "completion_tokens", 0) or 0),
+        model=getattr(resp, "model", "") or prov.model,
+    )
+    return resp.choices[0].message.content or "", usage
 
 
-async def _describe_claude_code(path) -> str:
+async def _describe_claude_code(path) -> tuple[str, Usage]:
     prompt = f"Read the image file data/diagrams/{path.name} and {DESCRIBE_PROMPT}"
     args = [settings.claude_bin, "-p", "--output-format", "json", "--allowedTools", "Read"]
     if settings.claude_code_model:
@@ -146,30 +164,34 @@ async def _describe_claude_code(path) -> str:
     env = json.loads(out)
     if env.get("is_error"):
         raise RuntimeError(str(env.get("result"))[:200])
-    return env.get("result", "")
+    usage = usage_from_claude_envelope(env)
+    if not usage.model:
+        usage.model = settings.claude_code_model or "claude_code"
+    return env.get("result", ""), usage
 
 
-async def _describe_codex(path) -> str:
+async def _describe_codex(path) -> tuple[str, Usage]:
     with tempfile.TemporaryDirectory() as td:
         out = f"{td}/out.txt"
         args = [
-            settings.codex_bin, "exec", "-s", "read-only",
+            settings.codex_bin, "exec", "--json", "-s", "read-only",
             "--skip-git-repo-check", "-o", out, "-i", str(path),
         ]
         if settings.codex_model:
             args += ["-m", settings.codex_model]
 
-        _, _, err = await run_capture(
+        _, stdout, err = await run_capture(
             args, input_text=DESCRIBE_PROMPT, cwd=str(ROOT), timeout=settings.codex_timeout
         )
         try:
             with open(out) as f:
-                return f.read()
+                text = f.read()
         except FileNotFoundError:
             raise RuntimeError((err or "")[:200]) from None
+    return text, _codex_usage(stdout, settings.codex_model)
 
 
-async def _describe_ollama(path) -> str:
+async def _describe_ollama(path) -> tuple[str, Usage]:
     from ollama import AsyncClient
 
     client = AsyncClient(host=settings.ollama_host, timeout=settings.ollama_timeout)
@@ -177,10 +199,20 @@ async def _describe_ollama(path) -> str:
         model=settings.ollama_model,
         messages=[{"role": "user", "content": DESCRIBE_PROMPT, "images": [str(path)]}],
     )
-    return resp["message"]["content"]
+    content = resp["message"]["content"]
+    pe = int(resp.get("prompt_eval_count", 0) or 0)
+    ec = int(resp.get("eval_count", 0) or 0)
+    if pe or ec:
+        return content, Usage(input_tokens=pe, output_tokens=ec, model=settings.ollama_model)
+    return content, Usage(
+        input_tokens=estimate_tokens(DESCRIBE_PROMPT),
+        output_tokens=estimate_tokens(content),
+        model=settings.ollama_model,
+        estimated=True,
+    )
 
 
-async def _describe_claude_api(path) -> str:
+async def _describe_claude_api(path) -> tuple[str, Usage]:
     from anthropic import AsyncAnthropic
 
     if not settings.anthropic_api_key:
@@ -198,4 +230,10 @@ async def _describe_claude_api(path) -> str:
             ],
         }],
     )
-    return "".join(b.text for b in msg.content if b.type == "text")
+    u = getattr(msg, "usage", None)
+    usage = Usage(
+        input_tokens=int(getattr(u, "input_tokens", 0) or 0),
+        output_tokens=int(getattr(u, "output_tokens", 0) or 0),
+        model=getattr(msg, "model", "") or settings.claude_model,
+    )
+    return "".join(b.text for b in msg.content if b.type == "text"), usage

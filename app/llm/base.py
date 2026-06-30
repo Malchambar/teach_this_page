@@ -3,9 +3,58 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from app.models import PageCapture, Segment
+
+
+@dataclass
+class Usage:
+    """Token/cost usage from one (or several summed) model call(s). cost_usd is
+    set only when the engine reports it directly (Claude Code); otherwise it's
+    left None and estimated later from pricing. estimated=True means the token
+    counts themselves are approximate (e.g. a local engine that reports none)."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float | None = None
+    model: str = ""
+    estimated: bool = False
+
+    def add(self, other: "Usage") -> "Usage":
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
+        if other.cost_usd is not None:
+            self.cost_usd = (self.cost_usd or 0.0) + other.cost_usd
+        self.model = self.model or other.model
+        self.estimated = self.estimated or other.estimated
+        return self
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token count (~4 chars/token) for engines that don't report usage."""
+    return max(0, round(len(text or "") / 4))
+
+
+def usage_from_claude_envelope(env: dict) -> Usage:
+    """Pull tokens + real cost + model out of a `claude --output-format json`
+    envelope (also used by the vision pass). Cache tokens count as input."""
+    u = env.get("usage") or {}
+    inp = (
+        int(u.get("input_tokens", 0) or 0)
+        + int(u.get("cache_creation_input_tokens", 0) or 0)
+        + int(u.get("cache_read_input_tokens", 0) or 0)
+    )
+    out = int(u.get("output_tokens", 0) or 0)
+    model = next(iter((env.get("modelUsage") or {}).keys()), "")
+    cost = env.get("total_cost_usd")
+    return Usage(
+        input_tokens=inp,
+        output_tokens=out,
+        cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
+        model=model,
+    )
 
 # Cap how many diagrams we describe / list for the writer. Matches MAX_DIAGRAMS
 # in capture.py so every captured step image can be shown — long how-to pages

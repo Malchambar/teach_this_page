@@ -54,6 +54,24 @@ class Segment(BaseModel):
     audio_path: str | None = None  # filled in by TTS
 
 
+class LessonStats(BaseModel):
+    """Session statistics shown on the final slide: the engines used, the tokens
+    they consumed, and an ESTIMATED API-equivalent cost (the CLI/subscription
+    engines bill nothing per token — cost_note explains)."""
+
+    vision_provider: str = ""
+    writer_provider: str = ""
+    vision_model: str = ""
+    writer_model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    tokens_estimated: bool = False  # token counts are approximate (no engine report)
+    estimated_cost_usd: float | None = None
+    billing: str = ""  # "subscription" | "api" | "local" | "mixed"
+    cost_note: str = ""  # human sentence, e.g. "no charge accrued (subscription)"
+    built_at: str = ""  # ISO timestamp
+
+
 class Lesson(BaseModel):
     """A fully-built narrated lesson the player consumes."""
 
@@ -62,3 +80,4 @@ class Lesson(BaseModel):
     segments: list[Segment]
     diagrams: list[Diagram]
     steps: list[Step] = []  # step-mode: ordered steps (number/title) for labels/links
+    stats: LessonStats | None = None  # session stats for the final slide
