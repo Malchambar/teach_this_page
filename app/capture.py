@@ -157,11 +157,53 @@ async def _wake_lesson_tab(browser, cdp_url: str) -> Page | None:
     return None
 
 
+# Recirculation blocks — "Related Stories", "You May Also Like", newsletter
+# promos, comment widgets, footers — carry thumbnail images that are NOT part of
+# the article. Pulling them in pollutes the lesson and, worse, sends a dozen
+# off-topic images to the (paid) vision pass. Skip any image inside a semantic
+# aside/footer/nav, or a container whose class/id names one of these patterns.
+# (Confirmed on WikiHow: real step imgs sit in `.steps_list_2`, related cards in
+# `a.related-wh` / `#relatedwikihows` — the ancestor class/id is the tell.)
+_JUNK_KEYWORDS = (
+    "related", "recirc", "recommend", "newsletter", "trending", "popular",
+    "taboola", "outbrain", "zergnet", "sponsor", "comment", "promo",
+    "read-more", "readmore", "more-from", "morefrom", "up-next", "upnext",
+    "you-may", "youmay", "you-might", "subscribe", "footer",
+)
+_JUNK_TAGS = ("aside", "footer", "nav")
+
+# Live-DOM form: an img.closest(...) selector for _LOAD_JS.
+_JUNK_SELECTOR = ", ".join(
+    list(_JUNK_TAGS)
+    + [f'[class*="{k}" i]' for k in _JUNK_KEYWORDS]
+    + [f'[id*="{k}" i]' for k in _JUNK_KEYWORDS]
+)
+
+# Server-HTML form: match an lxml ancestor's class/id.
+_JUNK_RE = re.compile("|".join(re.escape(k) for k in _JUNK_KEYWORDS), re.I)
+
+
+def _in_junk_container(img) -> bool:
+    """True if an lxml <img> sits inside a recommendation/related/footer block."""
+    el = img.getparent()
+    for _ in range(12):
+        if el is None:
+            return False
+        if el.tag in _JUNK_TAGS:
+            return True
+        cid = f"{el.get('class') or ''} {el.get('id') or ''}"
+        if cid.strip() and _JUNK_RE.search(cid):
+            return True
+        el = el.getparent()
+    return False
+
+
 # Many sites (WikiHow, news, docs...) lazy-load images: the real URL lives in
 # data-src / srcset and `src` is a blank placeholder until you scroll. Resolve the
 # real source, assign it, and wait for it to paint so the screenshot isn't empty.
 _LOAD_JS = """
-async (img) => {
+async (img, junkSel) => {
+  if (junkSel) { try { if (img.closest(junkSel)) return { junk: true }; } catch (e) {} }
   const first = (s) => (s || '').trim().split(',')[0].trim().split(/\\s+/)[0];
   let src = img.currentSrc || img.src || '';
   if (!src || src.startsWith('data:image/gif') || src.startsWith('data:image/svg')) {
@@ -277,7 +319,11 @@ async def _extract_diagrams(page: Page) -> list[Diagram]:
             # can both size it correctly and screenshot it without a blank frame.
             # Hard backstop: evaluate() has no timeout of its own, so cap it —
             # a single pathological image must never freeze the whole capture.
-            loaded = await asyncio.wait_for(handle.evaluate(_LOAD_JS), timeout=6)
+            loaded = await asyncio.wait_for(
+                handle.evaluate(_LOAD_JS, _JUNK_SELECTOR), timeout=6
+            )
+            if loaded.get("junk"):  # inside a related/recommended/footer block
+                continue
             box = await handle.bounding_box()
             disp_w = box["width"] if box else 0
             disp_h = box["height"] if box else 0
@@ -381,6 +427,8 @@ async def _diagrams_from_html(page: Page, html: str, base_url: str) -> list[Diag
     for img in doc.iter("img"):
         if len(diagrams) >= MAX_DIAGRAMS:
             break
+        if _in_junk_container(img):  # related/recommended/footer thumbnail — skip
+            continue
         raw = (
             img.get("data-src")
             or img.get("src")
