@@ -63,6 +63,14 @@ class LessonStats(BaseModel):
     writer_provider: str = ""
     vision_model: str = ""
     writer_model: str = ""
+    # per-pass breakdown (vision = reading diagrams, writer = writing narration)
+    vision_input_tokens: int = 0
+    vision_output_tokens: int = 0
+    vision_cost_usd: float | None = None
+    writer_input_tokens: int = 0
+    writer_output_tokens: int = 0
+    writer_cost_usd: float | None = None
+    # totals
     input_tokens: int = 0
     output_tokens: int = 0
     tokens_estimated: bool = False  # token counts are approximate (no engine report)

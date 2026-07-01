@@ -61,14 +61,18 @@ def _build_stats(
     v_prov = vision or "off"
     w_prov = writer or ""
 
-    def _pass_cost(provider: str, u: Usage) -> float:
+    def _pass_cost(provider: str, u: Usage) -> float | None:
+        if not (u.input_tokens or u.output_tokens):
+            return None
         if u.cost_usd is not None:  # engine reported real cost (Claude Code)
-            return u.cost_usd
-        return pricing.estimate_cost(provider, u.model, u.input_tokens, u.output_tokens) or 0.0
+            return round(u.cost_usd, 6)
+        return pricing.estimate_cost(provider, u.model, u.input_tokens, u.output_tokens)
 
+    vision_cost = _pass_cost(v_prov, vision_usage)
+    writer_cost = _pass_cost(w_prov, writer_usage)
     in_tok = vision_usage.input_tokens + writer_usage.input_tokens
     out_tok = vision_usage.output_tokens + writer_usage.output_tokens
-    cost = round(_pass_cost(v_prov, vision_usage) + _pass_cost(w_prov, writer_usage), 6)
+    cost = round((vision_cost or 0.0) + (writer_cost or 0.0), 6)
 
     used = [p for p in (v_prov, w_prov) if p and p != "off"]
     kinds = {pricing.engine_billing(p) for p in used} or {"local"}
@@ -92,6 +96,12 @@ def _build_stats(
         writer_provider=w_prov,
         vision_model=vision_usage.model,
         writer_model=writer_usage.model,
+        vision_input_tokens=vision_usage.input_tokens,
+        vision_output_tokens=vision_usage.output_tokens,
+        vision_cost_usd=vision_cost,
+        writer_input_tokens=writer_usage.input_tokens,
+        writer_output_tokens=writer_usage.output_tokens,
+        writer_cost_usd=writer_cost,
         input_tokens=in_tok,
         output_tokens=out_tok,
         tokens_estimated=vision_usage.estimated or writer_usage.estimated,

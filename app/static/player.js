@@ -245,17 +245,35 @@ function renderStats(s) {
   const num = (n) => (n || 0).toLocaleString();
   const eng = (p, m) =>
     !p || p === "off" ? "—" : esc(p) + (m && m !== p ? ` · ${esc(m)}` : "");
-  const cost =
-    s.estimated_cost_usd != null ? `$${Number(s.estimated_cost_usd).toFixed(4)}` : "n/a";
+  const money = (c) => (c == null ? "—" : `$${Number(c).toFixed(4)}`);
   const approx = s.tokens_estimated ? " (approx)" : "";
+  const row = (label, engine, tin, tout, cost, cls) =>
+    `<div class="stats-row ${cls || ""}">` +
+    `<span class="sr-label">${label}</span>` +
+    `<span class="sr-eng">${engine}</span>` +
+    `<span class="sr-tok">${num(tin)} in · ${num(tout)} out</span>` +
+    `<span class="sr-cost">${money(cost)}</span>` +
+    `</div>`;
+  const visUsed = s.vision_input_tokens || s.vision_output_tokens;
   return (
-    `<div class="stats-title">Session stats</div>` +
-    `<dl class="stats-grid">` +
-    `<dt>Vision engine</dt><dd>${eng(s.vision_provider, s.vision_model)}</dd>` +
-    `<dt>Writer engine</dt><dd>${eng(s.writer_provider, s.writer_model)}</dd>` +
-    `<dt>Tokens${approx}</dt><dd>${num(s.input_tokens)} in · ${num(s.output_tokens)} out</dd>` +
-    `<dt>Est. cost (API-equiv.)</dt><dd>${cost}</dd>` +
-    `</dl>` +
+    `<div class="stats-title">Session stats${approx}</div>` +
+    `<div class="stats-rows">` +
+    row(
+      "Vision",
+      eng(s.vision_provider, s.vision_model),
+      s.vision_input_tokens,
+      s.vision_output_tokens,
+      visUsed ? s.vision_cost_usd : null
+    ) +
+    row(
+      "Writer",
+      eng(s.writer_provider, s.writer_model),
+      s.writer_input_tokens,
+      s.writer_output_tokens,
+      s.writer_cost_usd
+    ) +
+    row("Total", "", s.input_tokens, s.output_tokens, s.estimated_cost_usd, "stats-total") +
+    `</div>` +
     `<div class="stats-note">${esc(s.cost_note || "")}</div>`
   );
 }
