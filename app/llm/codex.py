@@ -23,6 +23,22 @@ from app.llm.base import (
 from app.models import PageCapture, Segment
 
 
+def _codex_default_model() -> str:
+    """The model codex runs by default (from $CODEX_HOME/config.toml), since the
+    --json stream doesn't report the model name and CODEX_MODEL is usually unset."""
+    import os
+    import tomllib
+    from pathlib import Path
+
+    cfg = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    try:
+        with open(cfg, "rb") as f:
+            m = tomllib.load(f).get("model")
+        return m if isinstance(m, str) else ""
+    except Exception:
+        return ""
+
+
 def _codex_usage(stdout: str, model: str) -> Usage:
     """Parse token usage from codex's `--json` JSONL stream (the last event that
     carries a usage object — e.g. turn.completed). No cost: codex is subscription."""
@@ -39,7 +55,7 @@ def _codex_usage(stdout: str, model: str) -> Usage:
         if isinstance(u, dict):
             inp = int(u.get("input_tokens", inp) or inp)
             out = int(u.get("output_tokens", out) or out)
-    return Usage(input_tokens=inp, output_tokens=out, model=model or "codex")
+    return Usage(input_tokens=inp, output_tokens=out, model=model or _codex_default_model() or "codex")
 
 # OpenAI structured-output schema (strict: all props required, no extras).
 _SCHEMA = {
