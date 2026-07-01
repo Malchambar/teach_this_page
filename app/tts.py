@@ -51,33 +51,18 @@ def _audio_name(text: str, voice: str, speed: float) -> str:
     return f"seg-{hashlib.sha1(key).hexdigest()[:16]}.wav"
 
 
-_LETTER_SOUNDS = {
-    "A": "ay", "B": "bee", "C": "see", "D": "dee", "E": "ee", "F": "eff",
-    "G": "jee", "H": "aitch", "I": "eye", "J": "jay", "K": "kay", "L": "el",
-    "M": "em", "N": "en", "O": "oh", "P": "pee", "Q": "cue", "R": "ar",
-    "S": "ess", "T": "tee", "U": "you", "V": "vee", "W": "double-u",
-    "X": "ex", "Y": "why", "Z": "zee",
-}
-
-
-def _spell_acronym(acr: str) -> str:
-    """Phonetic letter names so TTS says e.g. API as 'ay pee eye' (a plain 'A'
-    reads as the article 'uh', so spaces alone mispronounce vowel letters)."""
-    return " ".join(_LETTER_SOUNDS.get(ch, ch) for ch in acr)
-
-
 def _clean(text: str) -> str:
     """Make text speakable: turn arrows/symbols into words, drop odd characters.
     Acronyms are spaced here (audio only) so the voice spells them out — DNS ->
     'D N S' — while the on-screen text the model wrote stays clean."""
     text = text.replace("->", " to ").replace("→", " to ").replace("—", ", ")
     text = re.sub(r"[*_`#>|]", " ", text)  # markdown leftovers
-    text = re.sub(r"(?<=\w)/(?=\w)", " ", text)  # CI/CD -> CI CD (not "slash"), TCP/IP, and/or
-    # Spell short all-caps acronyms (2-4 letters: DNS, API, TCP, EDR, URL) PHONETICALLY
-    # so the voice says the letter names. Plain letters fail on vowels — a lone "A"
-    # reads as the article "uh", so "API" became "ah-pee-eye"; the sound map fixes it.
-    # Longer all-caps (e.g. TALOS) are left alone to read as words.
-    text = re.sub(r"\b([A-Z]{2,4})\b", lambda m: _spell_acronym(m.group(1)), text)
+    text = re.sub(r"(?<=\w)/(?=\w)", " ", text)  # CI/CD -> CI CD (not "slash"); TCP/IP; and/or
+    # NOTE: do NOT respell acronyms. The espeak phonemizer already reads them as
+    # letters IN CONTEXT ("API" -> "ay pee eye", "DNS" -> "dee en ess", "EDR" ->
+    # "ee dee ar"). A manual respelling actually broke this — "ay" phonemizes to
+    # "eye", so "API" came out "eye pee eye". The writer is prompted to keep
+    # acronyms as plain letters, which also keeps the on-screen text clean.
     return re.sub(r"\s+", " ", text).strip()
 
 
